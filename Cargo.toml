@@ -1,0 +1,20 @@
+[package]
+name = "picasa-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+anyhow = "1"
+bytemuck = "1"
+egui = { version = "0.37", features = ["default_fonts"] }
+egui-wgpu = { version = "0.37", features = ["winit"] }
+egui-winit = "0.37"
+env_logger = "0.11"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "bmp", "gif"] }
+kamadak-exif = "0.6"
+log = "0.4"
+pollster = "1"
+rayon = "1"
+wgpu = "30"
+winit = "0.30"

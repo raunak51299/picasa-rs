@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=picasa-rs
+GenericName=Photo Viewer
+Comment=Fast, borderless photo viewer with EXIF-aware navigation
+Exec=picasa-rs %f
+Icon=picasa-rs
+Terminal=false
+Categories=Graphics;Viewer;Photography;
+MimeType=image/jpeg;image/png;image/webp;image/tiff;image/bmp;image/gif;
+StartupNotify=true
+StartupWMClass=picasa-rs
