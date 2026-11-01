@@ -78,6 +78,7 @@ enum UiAction {
     CopyPath,
     OpenDefault,
     Reveal,
+    Print,
     SetAdjustments(Adjustments),
     Save {
         mode: SaveMode,

@@ -672,12 +672,15 @@ impl App {
                                 if small_button(ui, "Show in folder").clicked() {
                                     actions.push(UiAction::Reveal);
                                 }
+                                if small_button(ui, "Print").clicked() {
+                                    actions.push(UiAction::Print);
+                                }
                             });
                             ui.add_space(6.0);
                             ui.label(
                                 egui::RichText::new(
                                     "Copy image copies the current view, including fixes. \
-                                     Ctrl+C / Ctrl+Shift+C / Ctrl+E / Ctrl+Enter.",
+                                     Ctrl+C / Ctrl+Shift+C / Ctrl+E / Ctrl+Enter / Ctrl+P.",
                                 )
                                 .size(10.0)
                                 .color(egui::Color32::from_gray(145)),

@@ -191,6 +191,11 @@ impl App {
                     self.open_current();
                 }
             }
+            KeyCode::KeyP => {
+                if !repeat && self.modifiers.control_key() {
+                    self.print_current();
+                }
+            }
             KeyCode::KeyH => {
                 if !repeat {
                     self.show_help_until = Instant::now() + HELP_DURATION;
@@ -484,6 +489,32 @@ impl App {
         }
     }
 
+    fn print_current(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        match share::print(&path) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: format!("Opened the print dialog for {name}"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+                log::info!("sent {} to the print handler", path.display());
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not print {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     fn reveal_current(&mut self) {
         let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
             return;
@@ -580,6 +611,7 @@ impl App {
             UiAction::CopyPath => self.copy_current_path(),
             UiAction::OpenDefault => self.open_current(),
             UiAction::Reveal => self.reveal_current(),
+            UiAction::Print => self.print_current(),
             UiAction::SetAdjustments(mut adjustments) => {
                 adjustments.clamp();
                 self.adjustments = adjustments;

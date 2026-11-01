@@ -99,6 +99,7 @@ CONTROLS:
     Ctrl + Shift + C    copy the file path
     Ctrl + E            show the file in Explorer
     Ctrl + Enter        open with the default application
+    Ctrl + P            print with the registered print handler
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only

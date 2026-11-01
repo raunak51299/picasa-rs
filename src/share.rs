@@ -75,45 +75,54 @@ pub fn reveal(path: &Path) -> Result<()> {
 
 /// Open the file in whatever application is registered for its type.
 pub fn open_default(path: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::UI::Shell::ShellExecuteW;
-        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    shell_execute("open", path, "open with its default application")
+}
 
-        let operation: Vec<u16> = "open\0".encode_utf16().collect();
-        let file: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+/// Send the file to the application registered for the shell `print` verb.
+pub fn print(path: &Path) -> Result<()> {
+    shell_execute("print", path, "print")
+}
 
-        // SAFETY: both strings are NUL-terminated and outlive the call.
-        let result = unsafe {
-            ShellExecuteW(
-                std::ptr::null_mut(),
-                operation.as_ptr(),
-                file.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        if result as isize <= 32 {
-            bail!(
-                "Windows could not open {} with its default application (code {})",
-                path.display(),
-                result as isize
-            );
-        }
-        Ok(())
+#[cfg(windows)]
+fn shell_execute(verb: &str, path: &Path, description: &str) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation: Vec<u16> = verb.encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        bail!(
+            "Windows could not {description} {} (code {})",
+            path.display(),
+            result as isize
+        );
     }
+    Ok(())
+}
 
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        bail!("opening files with the default application is only available on Windows")
-    }
+#[cfg(not(windows))]
+fn shell_execute(_verb: &str, path: &Path, description: &str) -> Result<()> {
+    bail!(
+        "cannot {description} {}: shell actions are only available on Windows",
+        path.display()
+    )
 }
 
 #[cfg(test)]
