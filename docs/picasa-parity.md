@@ -24,18 +24,18 @@ adds.
 
 ## Gaps addressed in this branch
 
-| Feature | Picasa Photo Viewer behaviour | picasa-rs plan |
+| Feature | Picasa Photo Viewer behaviour | picasa-rs status |
 | :--- | :--- | :--- |
-| Persistent rotation | Rotate buttons wrote the rotation to the file. | `R`/`L` and `Ctrl+Left/Right` rewrite the EXIF orientation of JPEGs after confirmation. `Shift+R`/`L` keeps the old view-only rotation. |
-| Fit / 1:1 | Fit, actual size, and a zoom percentage. | Already present; keep the existing controls. |
-| Slideshow | Play/pause, interval, full-screen advance. | Play/pause button, `Space`/`S`, configurable interval, optional crossfade, `Esc` exits. |
-| Delete | `Delete` moved the photo to the Recycle Bin and advanced. | Confirmation, Recycle Bin via the Windows shell, advance to the next image. |
-| Info panel | `I` showed file and camera metadata. | Overlay with filename, dimensions, size, date, camera, exposure, ISO, focal length, and GPS. |
-| One-click fixes | Auto colour/contrast, lighten, darken, then save. | GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. JPEG saves keep the original EXIF APP1 segment and re-encode at quality 92. |
-| Open and share | Reveal in Explorer, open in an editor, copy. | Share panel (`C`): copy the current view (including fixes) or path, open in the default application, reveal in Explorer, and print, with `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+E`, `Ctrl+Enter`, and `Ctrl+P` shortcuts. |
-| Print | Printed the current photo with the shell print verb. | Windows shell `print` verb on the current file. |
-| Animated GIF | Played GIF frames with their delays. | Frame-delay playback for GIF and animated WebP, looping while the photo is on screen, restarting after navigation, and capped at 600 frames or 256 MiB. |
-| Drag and drop | Dropping a file or folder opened it. | Accept dropped files and folders and rebuild the folder listing. Done: a dropped photo opens in its folder; a dropped folder opens its first supported image. |
+| Persistent rotation | Rotate buttons wrote the rotation to the file. | Done: `R`/`L` and `Ctrl+Left/Right` rewrite the EXIF orientation of JPEGs after confirmation. `Shift+R`/`L` keeps the old view-only rotation. |
+| Fit / 1:1 | Fit, actual size, and a zoom percentage. | Already present; the existing controls were kept. |
+| Slideshow | Play/pause, interval, full-screen advance. | Done: play/pause button, `Space`/`S`, 2-30 second interval with `[`/`]`, fade-in per photo, and `Esc` stops without closing. |
+| Delete | `Delete` moved the photo to the Recycle Bin and advanced. | Done: confirmation (disable with `confirm_delete = false`), Recycle Bin via the Windows shell, and advance to the next image. |
+| Info panel | `I` showed file and camera metadata. | Done: overlay with filename, dimensions, size, date, camera, exposure, ISO, focal length, and GPS. |
+| One-click fixes | Auto colour/contrast, lighten, darken, then save. | Done: GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. JPEG saves keep the original EXIF APP1 segment and re-encode at quality 92. |
+| Open and share | Reveal in Explorer, open in an editor, copy. | Done: share panel (`C`) with Copy image, Copy path, Open, Show in folder, and Print, plus the `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+E`, `Ctrl+Enter`, and `Ctrl+P` shortcuts. |
+| Print | Printed the current photo with the shell print verb. | Done: Windows shell `print` verb on the current file. |
+| Animated GIF | Played GIF frames with their delays. | Done: frame-delay playback for GIF and animated WebP, looping while the photo is on screen, restarting after navigation, and capped at 600 frames or 256 MiB. |
+| Drag and drop | Dropping a file or folder opened it. | Done: a dropped photo opens in its folder; a dropped folder opens its first supported image. |
 | Open with / associations | Installed as an "Open with" handler. | Done: `packaging/windows/install.ps1` registers a per-user ProgID, `OpenWithProgids`, a Default Programs `Capabilities` entry, and "Open with picasa-rs" verbs for image files and folders. The CLI path argument remains the entry point. |
 | Single instance | A second launch reused the running viewer. | Done: a session-scoped named mutex plus named pipe forwards the requested file or folder to the existing window, which also comes to the foreground. A launch without a path only focuses the window. |
 | Preferences | Remembered slideshow and viewer settings. | Done: `%APPDATA%\picasa-rs\config.toml` stores the slideshow interval, scrim opacity, and delete confirmation. Interval changes save automatically; malformed files fall back to defaults. |
