@@ -1,5 +1,6 @@
 //! Keyboard, mouse, and HUD action handling.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use winit::event_loop::ActiveEventLoop;
@@ -9,10 +10,13 @@ use winit::window::CursorIcon;
 use crate::delete;
 use crate::loader::JobKind;
 use crate::rotate;
+use crate::save::{self, SaveMode};
 use crate::viewer::camera::Vec2;
 
 use super::slideshow::{Slideshow, stepped_interval};
-use super::{App, HELP_DURATION, RotationRequest, TOAST_DURATION, Toast, UiAction, truncate};
+use super::{
+    App, HELP_DURATION, RotationRequest, SaveRequest, TOAST_DURATION, Toast, UiAction, truncate,
+};
 
 impl App {
     pub(super) fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, repeat: bool) {
@@ -21,6 +25,21 @@ impl App {
                 match code {
                     KeyCode::Enter | KeyCode::KeyY => self.confirm_delete(),
                     KeyCode::Escape | KeyCode::KeyN => self.pending_delete = None,
+                    _ => {}
+                }
+            }
+            self.record_activity();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            return;
+        }
+
+        if self.pending_save.is_some() {
+            if !repeat {
+                match code {
+                    KeyCode::Enter | KeyCode::KeyY => self.confirm_save(),
+                    KeyCode::Escape | KeyCode::KeyN => self.pending_save = None,
                     _ => {}
                 }
             }
@@ -51,6 +70,8 @@ impl App {
                 if !repeat {
                     if self.show_info {
                         self.show_info = false;
+                    } else if self.show_fixes {
+                        self.show_fixes = false;
                     } else if self.slideshow.take().is_some() {
                         self.toast = Some(Toast {
                             text: "Slideshow stopped".to_string(),
@@ -137,6 +158,11 @@ impl App {
                     if self.show_info {
                         self.photo_info = self.nav.current_path().map(crate::info::read);
                     }
+                }
+            }
+            KeyCode::KeyF => {
+                if !repeat {
+                    self.show_fixes = !self.show_fixes;
                 }
             }
             KeyCode::KeyH => {
@@ -266,6 +292,101 @@ impl App {
         }
     }
 
+    fn invalidate_path(&mut self, path: &Path) {
+        self.photos.remove(path);
+        self.thumbs.remove(path);
+        self.failed_full.remove(path);
+        self.failed_thumb.remove(path);
+        self.reload_full.insert(path.to_path_buf());
+        self.reload_thumb.insert(path.to_path_buf());
+
+        if let Some(loader) = &self.loader {
+            if !loader.has_in_flight(path, JobKind::Full) {
+                self.reload_full.remove(path);
+            }
+            if !loader.has_in_flight(path, JobKind::Thumb) {
+                self.reload_thumb.remove(path);
+            }
+        }
+    }
+
+    fn request_save(&mut self, mode: SaveMode, mut adjustments: crate::adjust::Adjustments) {
+        adjustments.clamp();
+        self.adjustments = adjustments;
+        if adjustments.is_neutral() {
+            self.toast = Some(Toast {
+                text: "Adjust the photo before saving".to_string(),
+                until: Instant::now() + TOAST_DURATION,
+            });
+            return;
+        }
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        let request = SaveRequest { path, adjustments };
+        if mode == SaveMode::Overwrite {
+            self.pending_save = Some(request);
+        } else {
+            self.save_now(request, mode);
+        }
+    }
+
+    fn confirm_save(&mut self) {
+        let Some(request) = self.pending_save.take() else {
+            return;
+        };
+        self.save_now(request, SaveMode::Overwrite);
+    }
+
+    fn save_now(&mut self, request: SaveRequest, mode: SaveMode) {
+        let name = request
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        match save::save_adjusted(&request.path, request.adjustments, mode) {
+            Ok(saved) => {
+                let saved_name = saved
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if saved.is_copy {
+                    self.nav.insert_sorted(saved.path.clone());
+                    self.toast = Some(Toast {
+                        text: format!("Saved copy as {saved_name}"),
+                        until: Instant::now() + TOAST_DURATION,
+                    });
+                    log::info!("saved adjusted copy {}", saved.path.display());
+                    self.request_window();
+                } else {
+                    let is_current = self.nav.current_path() == Some(saved.path.as_path());
+                    self.invalidate_path(&saved.path);
+                    self.toast = Some(Toast {
+                        text: format!("Saved fixes to {name}"),
+                        until: Instant::now() + TOAST_DURATION,
+                    });
+                    log::info!("saved color fixes to {}", saved.path.display());
+                    if is_current {
+                        self.camera.clear_image();
+                        self.on_current_changed();
+                    } else {
+                        self.request_window();
+                    }
+                }
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not save {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     fn request_rotation(&mut self, clockwise: bool) {
         let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
             return;
@@ -293,22 +414,7 @@ impl App {
 
         match rotate::rotate_file(&request.path, request.clockwise) {
             Ok(orientation) => {
-                self.photos.remove(&request.path);
-                self.thumbs.remove(&request.path);
-                self.failed_full.remove(&request.path);
-                self.failed_thumb.remove(&request.path);
-                self.reload_full.insert(request.path.clone());
-                self.reload_thumb.insert(request.path.clone());
-
-                if let Some(loader) = &self.loader {
-                    if !loader.has_in_flight(&request.path, JobKind::Full) {
-                        self.reload_full.remove(&request.path);
-                    }
-                    if !loader.has_in_flight(&request.path, JobKind::Thumb) {
-                        self.reload_thumb.remove(&request.path);
-                    }
-                }
-
+                self.invalidate_path(&request.path);
                 self.toast = Some(Toast {
                     text: format!("Rotated {name}"),
                     until: Instant::now() + TOAST_DURATION,
@@ -346,6 +452,14 @@ impl App {
                     self.photo_info = self.nav.current_path().map(crate::info::read);
                 }
             }
+            UiAction::ToggleFixes => self.show_fixes = !self.show_fixes,
+            UiAction::SetAdjustments(mut adjustments) => {
+                adjustments.clamp();
+                self.adjustments = adjustments;
+            }
+            UiAction::Save { mode, adjustments } => self.request_save(mode, adjustments),
+            UiAction::ConfirmSave => self.confirm_save(),
+            UiAction::CancelSave => self.pending_save = None,
             UiAction::ZoomIn => self.camera.zoom_at(self.viewport_center(), 1.25),
             UiAction::ZoomOut => self.camera.zoom_at(self.viewport_center(), 0.8),
             UiAction::SetZoom(scale) => self

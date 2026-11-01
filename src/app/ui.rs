@@ -2,6 +2,8 @@
 
 use std::time::Instant;
 
+use crate::save::SaveMode;
+
 use super::{App, THUMB_RADIUS, UiAction, truncate};
 
 impl App {
@@ -40,6 +42,14 @@ impl App {
                 .to_string_lossy()
                 .to_string()
         });
+        let saving = self.pending_save.as_ref().map(|request| {
+            request
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let show_controls = self.hud_alpha > 0.01;
         let pointer_near_bottom = self
@@ -55,7 +65,9 @@ impl App {
             && toast.is_none()
             && rotation.is_none()
             && deletion.is_none()
+            && saving.is_none()
             && !self.show_info
+            && !self.show_fixes
         {
             return actions;
         }
@@ -128,6 +140,13 @@ impl App {
                                             .color(egui::Color32::from_gray(185)),
                                     );
                                 }
+                                if !self.adjustments.is_neutral() {
+                                    ui.label(
+                                        egui::RichText::new("Edited")
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(118, 186, 255)),
+                                    );
+                                }
                                 ui.separator();
 
                                 let playing = self.slideshow.is_some();
@@ -193,6 +212,9 @@ impl App {
                                 }
                                 if small_button(ui, "Rot +").clicked() {
                                     actions.push(UiAction::RotatePersist(true));
+                                }
+                                if small_button(ui, "Fix").clicked() {
+                                    actions.push(UiAction::ToggleFixes);
                                 }
                                 if small_button(ui, "Info").clicked() {
                                     actions.push(UiAction::ToggleInfo);
@@ -473,6 +495,128 @@ impl App {
                 });
         }
 
+        if self.show_fixes {
+            let mut adjustments = self.adjustments;
+            let mut changed = false;
+            egui::Area::new(egui::Id::unique("fix-panel"))
+                .anchor(egui::Align2::LEFT_TOP, egui::vec2(18.0, 18.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(205))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(24)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.set_max_width(320.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Fixes").size(14.0).strong());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if small_button(ui, "Close").clicked() {
+                                            actions.push(UiAction::ToggleFixes);
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("One-click looks")
+                                    .size(10.0)
+                                    .color(egui::Color32::from_gray(135)),
+                            );
+                            ui.horizontal_wrapped(|ui| {
+                                for (label, preset) in [
+                                    ("Auto", crate::adjust::Adjustments::auto()),
+                                    ("Lighten", crate::adjust::Adjustments::lighten()),
+                                    ("Darken", crate::adjust::Adjustments::darken()),
+                                    ("Warm", crate::adjust::Adjustments::warm()),
+                                    ("Cool", crate::adjust::Adjustments::cool()),
+                                ] {
+                                    if small_button(ui, label).clicked() {
+                                        adjustments = preset;
+                                        changed = true;
+                                    }
+                                }
+                            });
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            ui.spacing_mut().slider_width = 190.0;
+
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut adjustments.brightness, -0.3..=0.3)
+                                        .text("Brightness"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut adjustments.contrast, 0.25..=2.5)
+                                        .text("Contrast"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut adjustments.gamma, 0.2..=3.0)
+                                        .text("Gamma"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(egui::Slider::new(&mut adjustments.red, 0.5..=1.5).text("Red"))
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut adjustments.green, 0.5..=1.5)
+                                        .text("Green"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut adjustments.blue, 0.5..=1.5)
+                                        .text("Blue"),
+                                )
+                                .changed();
+
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.add_enabled_ui(!adjustments.is_neutral(), |ui| {
+                                    if small_button(ui, "Save").clicked() {
+                                        actions.push(UiAction::Save {
+                                            mode: SaveMode::Overwrite,
+                                            adjustments,
+                                        });
+                                    }
+                                    if small_button(ui, "Save a copy").clicked() {
+                                        actions.push(UiAction::Save {
+                                            mode: SaveMode::Copy,
+                                            adjustments,
+                                        });
+                                    }
+                                });
+                                if small_button(ui, "Revert").clicked() {
+                                    adjustments = crate::adjust::Adjustments::default();
+                                    changed = true;
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(if adjustments.is_neutral() {
+                                    "No adjustments"
+                                } else {
+                                    "Preview only — Save applies it to the file"
+                                })
+                                .size(10.0)
+                                .color(egui::Color32::from_gray(150)),
+                            );
+                        });
+                });
+            if changed {
+                actions.push(UiAction::SetAdjustments(adjustments));
+            }
+        }
+
         if self.show_info {
             egui::Area::new(egui::Id::unique("info-panel"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
@@ -604,6 +748,46 @@ impl App {
                 });
         }
 
+        if let Some(file_name) = saving {
+            egui::Area::new(egui::Id::unique("save-confirm"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(210))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(18))
+                        .show(ui, |ui| {
+                            ui.set_max_width(440.0);
+                            ui.label(
+                                egui::RichText::new(format!("Save color fixes to {file_name}?"))
+                                    .size(14.0)
+                                    .strong(),
+                            );
+                            ui.add_space(5.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "The adjusted pixels replace the original file. \
+                                     JPEG metadata and orientation are preserved. \
+                                     Use Save a copy to keep the original unchanged.",
+                                )
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(170)),
+                            );
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                if small_button(ui, "Save").clicked() {
+                                    actions.push(UiAction::ConfirmSave);
+                                }
+                                if small_button(ui, "Cancel").clicked() {
+                                    actions.push(UiAction::CancelSave);
+                                }
+                            });
+                        });
+                });
+        }
+
         if let Some(text) = toast {
             egui::Area::new(egui::Id::unique("toast"))
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
@@ -644,7 +828,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   I: info   |   Del: recycle   |   R/L: rotate + save   |   Esc: stop / close",
+                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   Del: recycle   |   R/L: rotate   |   Esc: close panel / stop / exit",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),

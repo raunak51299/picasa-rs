@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod adjust;
 mod app;
 mod delete;
 mod info;
@@ -12,6 +13,7 @@ mod loader;
 mod preview;
 mod renderer;
 mod rotate;
+mod save;
 mod viewer;
 
 use std::path::{Path, PathBuf};
@@ -90,6 +92,7 @@ CONTROLS:
     [ / ]               shorten / lengthen slideshow interval
     Delete              move the current photo to the Recycle Bin
     I                   show or hide photo metadata
+    F                   show or hide color fixes
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only

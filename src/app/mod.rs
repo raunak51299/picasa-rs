@@ -20,10 +20,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
+use crate::adjust::Adjustments;
 use crate::info::{self, PhotoInfo};
 use crate::loader::{Loader, LoaderEvent};
 use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
+use crate::save::SaveMode;
 use crate::viewer::camera::{Camera, Vec2};
 use crate::viewer::navigation::Navigation;
 
@@ -48,6 +50,11 @@ struct RotationRequest {
     clockwise: bool,
 }
 
+struct SaveRequest {
+    path: PathBuf,
+    adjustments: Adjustments,
+}
+
 pub enum UserEvent {
     /// A loader result is waiting in the loader channel.
     LoaderReady,
@@ -65,6 +72,14 @@ enum UiAction {
     ConfirmDelete,
     CancelDelete,
     ToggleInfo,
+    ToggleFixes,
+    SetAdjustments(Adjustments),
+    Save {
+        mode: SaveMode,
+        adjustments: Adjustments,
+    },
+    ConfirmSave,
+    CancelSave,
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
@@ -115,6 +130,9 @@ pub struct App {
     pending_delete: Option<PathBuf>,
     show_info: bool,
     photo_info: Option<PhotoInfo>,
+    show_fixes: bool,
+    adjustments: Adjustments,
+    pending_save: Option<SaveRequest>,
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
@@ -201,6 +219,9 @@ impl App {
             pending_delete: None,
             show_info: false,
             photo_info: None,
+            show_fixes: false,
+            adjustments: Adjustments::default(),
+            pending_save: None,
             slideshow: None,
             slideshow_interval: DEFAULT_INTERVAL,
             modifiers: ModifiersState::empty(),
@@ -371,6 +392,7 @@ impl App {
 
         self.scroll_filmstrip = true;
         self.last_click = None;
+        self.adjustments = Adjustments::default();
         if let Some(slideshow) = &mut self.slideshow {
             slideshow.defer(Instant::now());
         }
@@ -531,6 +553,7 @@ impl App {
         let half_size = self.camera.screen_half_size();
         let angle = self.camera.angle;
         let alpha = self.photo_fade;
+        let (adjust, gains) = self.adjustments.uniforms();
         let current_path = self.nav.current_path();
 
         let render_result = {
@@ -542,6 +565,8 @@ impl App {
                     half_size: [half_size.x, half_size.y],
                     angle,
                     alpha,
+                    adjust,
+                    gains,
                 });
 
             self.renderer

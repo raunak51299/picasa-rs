@@ -31,7 +31,7 @@ adds.
 | Slideshow | Play/pause, interval, full-screen advance. | Play/pause button, `Space`/`S`, configurable interval, optional crossfade, `Esc` exits. |
 | Delete | `Delete` moved the photo to the Recycle Bin and advanced. | Confirmation, Recycle Bin via the Windows shell, advance to the next image. |
 | Info panel | `I` showed file and camera metadata. | Overlay with filename, dimensions, size, date, camera, exposure, ISO, focal length, and GPS. |
-| One-click fixes | Auto colour/contrast, lighten, darken, then save. | GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. |
+| One-click fixes | Auto colour/contrast, lighten, darken, then save. | GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. JPEG saves keep the original EXIF APP1 segment and re-encode at quality 92. |
 | Open and share | Reveal in Explorer, open in an editor, copy. | Reveal, open with the default editor, copy image to clipboard, copy file path. |
 | Print | Printed the current photo with the shell print verb. | Windows shell `print` verb on the current file. |
 | Animated GIF | Played GIF frames with their delays. | Frame-delay playback, with WebP animation if the decoder support is cheap. |

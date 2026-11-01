@@ -9,6 +9,8 @@ struct PhotoUniforms {
     uv_row0: vec2<f32>,
     uv_row1: vec2<f32>,
     uv_offset: vec2<f32>,
+    adjust: vec4<f32>,
+    gains: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: PhotoUniforms;
@@ -67,6 +69,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     ) + u.uv_offset;
 
     var color = textureSample(photo_texture, photo_sampler, source_uv);
+
+    var rgb = color.rgb * u.gains.rgb;
+    rgb = (rgb - vec3<f32>(0.5)) * u.adjust.y + vec3<f32>(0.5);
+    rgb = rgb + vec3<f32>(u.adjust.x);
+    rgb = pow(max(rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / max(u.adjust.z, 0.01)));
+    color = vec4<f32>(rgb, color.a);
     color.a = color.a * u.alpha;
 
     // Rgba8UnormSrgb sampling returns linear values. A non-sRGB target needs

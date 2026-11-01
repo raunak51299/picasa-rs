@@ -109,6 +109,41 @@ impl Navigation {
         changed
     }
 
+    /// Insert a path in natural order without changing which photo is
+    /// selected. Returns its index, or the existing index if already listed.
+    pub fn insert_sorted(&mut self, path: PathBuf) -> usize {
+        if let Some(index) = self.index_of(&path) {
+            return index;
+        }
+
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let index = self.paths.partition_point(|existing| {
+            let existing_name = existing
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            natural_cmp(&existing_name, &name) == Ordering::Less
+        });
+        let was_empty = self.paths.is_empty();
+        self.paths.insert(index, path);
+        if !was_empty && index <= self.current {
+            // Keep the same photo selected when a new file lands before it.
+            self.current += 1;
+        }
+        self.index_by_path = self
+            .paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path.clone(), index))
+            .collect();
+        index
+    }
+
     /// Move by `delta`, wrapping at either end so holding an arrow key cycles.
     pub fn step(&mut self, delta: isize) -> bool {
         if self.paths.len() <= 1 {
@@ -269,6 +304,34 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn inserted_paths_keep_the_current_photo_selected() {
+        let mut navigation = Navigation {
+            paths: ["a.jpg", "c.jpg"].into_iter().map(PathBuf::from).collect(),
+            index_by_path: HashMap::new(),
+            current: 1,
+        };
+        navigation.index_by_path = navigation
+            .paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path.clone(), index))
+            .collect();
+
+        assert_eq!(navigation.insert_sorted(PathBuf::from("b.jpg")), 1);
+        assert_eq!(navigation.current(), 2);
+        assert_eq!(navigation.current_path(), Some(Path::new("c.jpg")));
+        assert_eq!(navigation.index_of(Path::new("b.jpg")), Some(1));
+        assert_eq!(navigation.index_of(Path::new("c.jpg")), Some(2));
+
+        // Inserting after the selection does not move it, and duplicates are
+        // ignored.
+        assert_eq!(navigation.insert_sorted(PathBuf::from("d.jpg")), 3);
+        assert_eq!(navigation.current(), 2);
+        assert_eq!(navigation.insert_sorted(PathBuf::from("d.jpg")), 3);
+        assert_eq!(navigation.len(), 4);
     }
 
     #[test]

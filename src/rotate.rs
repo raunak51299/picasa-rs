@@ -109,6 +109,43 @@ pub fn rewrite_jpeg_orientation(data: &[u8], orientation: u16) -> Result<Vec<u8>
     insert_exif_segment(data, &app1)
 }
 
+/// Return the raw EXIF APP1 payload (starting with `Exif\0\0`) from a JPEG.
+/// Copying the segment byte for byte keeps maker notes and other fields that
+/// this crate does not understand.
+pub fn exif_app1(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+        return None;
+    }
+
+    let mut index = 2;
+    while index + 1 < data.len() {
+        if data[index] != 0xFF {
+            return None;
+        }
+        let marker = data[index + 1];
+        if marker == 0xDA {
+            return None;
+        }
+        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            index += 2;
+            continue;
+        }
+        if index + 3 >= data.len() {
+            return None;
+        }
+        let length = u16::from_be_bytes([data[index + 2], data[index + 3]]) as usize;
+        if length < 2 || index + 2 + length > data.len() {
+            return None;
+        }
+        let segment = &data[index..index + 2 + length];
+        if marker == 0xE1 && segment.len() >= 10 && &segment[4..10] == b"Exif\0\0" {
+            return Some(segment[4..].to_vec());
+        }
+        index += 2 + length;
+    }
+    None
+}
+
 fn read_fields(data: &[u8]) -> Result<Vec<Field>> {
     let reader = Reader::new();
     let exif = reader
@@ -117,9 +154,14 @@ fn read_fields(data: &[u8]) -> Result<Vec<Field>> {
     Ok(exif.fields().cloned().collect())
 }
 
-fn insert_exif_segment(data: &[u8], app1: &[u8]) -> Result<Vec<u8>> {
+/// Insert `app1` as the only EXIF APP1 segment of a JPEG, replacing any
+/// existing EXIF payload and preserving every other segment.
+pub fn insert_exif_segment(data: &[u8], app1: &[u8]) -> Result<Vec<u8>> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         bail!("not a JPEG file");
+    }
+    if app1.len() + 2 > u16::MAX as usize {
+        bail!("EXIF data is too large for a JPEG segment");
     }
 
     let mut output = Vec::with_capacity(data.len() + app1.len() + 4);
@@ -180,7 +222,7 @@ mod tests {
         assert_eq!(rotate_orientation(0, true), 6);
     }
 
-    fn exif_app1(orientation: u16, description: &str) -> Vec<u8> {
+    fn make_exif_app1(orientation: u16, description: &str) -> Vec<u8> {
         let orientation = Field {
             tag: Tag::Orientation,
             ifd_num: In::PRIMARY,
@@ -213,7 +255,7 @@ mod tests {
 
     #[test]
     fn rewriting_keeps_other_fields_and_replaces_orientation() {
-        let original = jpeg_with_exif(&exif_app1(1, "keep me"));
+        let original = jpeg_with_exif(&make_exif_app1(1, "keep me"));
         let rewritten = rewrite_jpeg_orientation(&original, 8).unwrap();
 
         assert_eq!(read_orientation(&rewritten).unwrap(), 8);
@@ -233,5 +275,18 @@ mod tests {
             .count();
         assert_eq!(app1_count, 1);
         assert!(rewritten.ends_with(&[0x00, 0xFF, 0xD9]));
+    }
+
+    #[test]
+    fn raw_exif_segment_can_be_copied_between_jpegs() {
+        let app1 = make_exif_app1(1, "copy me");
+        let original = jpeg_with_exif(&app1);
+        let extracted = exif_app1(&original).unwrap();
+        assert_eq!(extracted, app1);
+
+        let mut encoded = vec![0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x00, 0xFF, 0xD9];
+        encoded = insert_exif_segment(&encoded, &extracted).unwrap();
+        assert_eq!(read_orientation(&encoded).unwrap(), 1);
+        assert!(encoded.ends_with(&[0x00, 0xFF, 0xD9]));
     }
 }

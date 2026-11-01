@@ -31,6 +31,11 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
   camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
   the file has them.
+- **GPU color fixes** — `F` opens non-destructive brightness, contrast, gamma,
+  and per-channel controls plus Auto, Lighten, Darken, Warm, and Cool presets.
+  The shader applies them live without touching the file; Revert clears them.
+  Save rewrites the file, Save a copy writes a sibling `(fixed)` file, and
+  adjustments reset when you move to another photo.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
 - **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
@@ -100,6 +105,7 @@ $env:RUST_LOG = "info"
 | `Space` / `S` | Start / pause the slideshow |
 | `[` / `]` | Shorten / lengthen the slideshow interval |
 | `I` | Show / hide the metadata panel |
+| `F` | Show / hide the color-fix panel |
 | `Delete` | Move the current photo to the Recycle Bin (asks first) |
 | `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
 | `Ctrl+Left` / `Ctrl+Right` | Rotate and save |
@@ -108,6 +114,17 @@ $env:RUST_LOG = "info"
 | `Esc` | Stop the slideshow, or close when it is not playing |
 | `Q` | Close |
 | Click outside the photo | Close |
+
+### Saving color fixes
+
+The fix panel previews adjustments on the GPU. **Save** asks for confirmation
+and replaces the original file; **Save a copy** writes
+`<name> (fixed).<ext>` (then `(fixed 2)`, and so on) and leaves the original
+untouched. JPEGs are re-encoded at quality 92 and keep their original EXIF APP1
+segment byte for byte, including the orientation tag. Other formats are
+re-encoded by the `image` crate with the orientation baked into the pixels,
+because their metadata is dropped. Saving color fixes for GIF files is not
+supported yet.
 
 ## Transparency on Windows
 

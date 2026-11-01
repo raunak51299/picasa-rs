@@ -16,6 +16,8 @@ pub struct PhotoUniforms {
     pub uv_row0: [f32; 2],
     pub uv_row1: [f32; 2],
     pub uv_offset: [f32; 2],
+    pub adjust: [f32; 4],
+    pub gains: [f32; 4],
 }
 
 #[repr(C)]
