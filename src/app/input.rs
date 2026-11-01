@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
-use winit::window::CursorIcon;
+use winit::window::{CursorIcon, ResizeDirection};
 
 use crate::delete;
 use crate::loader::JobKind;
@@ -681,6 +681,19 @@ impl App {
         let point = Vec2::new(position.x as f32, position.y as f32);
         let now = Instant::now();
 
+        // Borderless windows have no native resize border, so start the OS
+        // resize loop ourselves when the press lands on an edge.
+        if let Some(direction) = self.resize_direction(point) {
+            self.last_click = None;
+            self.resize_hovered = false;
+            if let Some(window) = &self.window
+                && let Err(error) = window.drag_resize_window(direction)
+            {
+                log::warn!("could not start a window resize: {error}");
+            }
+            return;
+        }
+
         if self.camera.has_image() && !self.camera.contains_screen_point(point) {
             // In fullscreen, clicking the transparent area drops into a
             // borderless window sized around the photo. Once windowed, the
@@ -717,6 +730,19 @@ impl App {
             }
             self.record_activity();
         }
+    }
+
+    /// Which window edge, if any, the pointer is on.
+    ///
+    /// Fullscreen windows are not resizable this way, and the 10-pixel band
+    /// keeps the HUD and filmstrip (inset by more than that) clickable.
+    pub(super) fn resize_direction(&self, point: Vec2) -> Option<ResizeDirection> {
+        let window = self.window.as_ref()?;
+        if window.fullscreen().is_some() {
+            return None;
+        }
+        let size = window.inner_size();
+        edge_resize_direction(size.width as f32, size.height as f32, point)
     }
 
     /// Leave fullscreen and size a borderless, resizable window around the
@@ -771,5 +797,79 @@ impl App {
 
         self.record_activity();
         window.request_redraw();
+    }
+}
+
+/// Map a pointer position to a window resize edge.
+fn edge_resize_direction(width: f32, height: f32, point: Vec2) -> Option<ResizeDirection> {
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    const EDGE: f32 = 10.0;
+    let left = point.x <= EDGE;
+    let right = point.x >= width - EDGE;
+    let top = point.y <= EDGE;
+    let bottom = point.y >= height - EDGE;
+    Some(match (left, right, top, bottom) {
+        (true, _, true, _) => ResizeDirection::NorthWest,
+        (_, true, true, _) => ResizeDirection::NorthEast,
+        (true, _, _, true) => ResizeDirection::SouthWest,
+        (_, true, _, true) => ResizeDirection::SouthEast,
+        (true, _, _, _) => ResizeDirection::West,
+        (_, true, _, _) => ResizeDirection::East,
+        (_, _, true, _) => ResizeDirection::North,
+        (_, _, _, true) => ResizeDirection::South,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_resize_direction;
+    use crate::viewer::camera::Vec2;
+    use winit::window::ResizeDirection;
+
+    const WIDTH: f32 = 800.0;
+    const HEIGHT: f32 = 600.0;
+
+    fn direction(x: f32, y: f32) -> Option<ResizeDirection> {
+        edge_resize_direction(WIDTH, HEIGHT, Vec2::new(x, y))
+    }
+
+    #[test]
+    fn the_centre_is_not_a_resize_edge() {
+        assert_eq!(direction(400.0, 300.0), None);
+        assert_eq!(direction(11.0, 11.0), None);
+        assert_eq!(direction(789.0, 589.0), None);
+    }
+
+    #[test]
+    fn corners_resize_in_both_axes() {
+        assert_eq!(direction(0.0, 0.0), Some(ResizeDirection::NorthWest));
+        assert_eq!(direction(WIDTH, 0.0), Some(ResizeDirection::NorthEast));
+        assert_eq!(direction(0.0, HEIGHT), Some(ResizeDirection::SouthWest));
+        assert_eq!(direction(WIDTH, HEIGHT), Some(ResizeDirection::SouthEast));
+    }
+
+    #[test]
+    fn edges_resize_in_one_axis() {
+        assert_eq!(direction(0.0, 300.0), Some(ResizeDirection::West));
+        assert_eq!(direction(WIDTH, 300.0), Some(ResizeDirection::East));
+        assert_eq!(direction(400.0, 0.0), Some(ResizeDirection::North));
+        assert_eq!(direction(400.0, HEIGHT), Some(ResizeDirection::South));
+    }
+
+    #[test]
+    fn the_band_is_ten_pixels_wide() {
+        assert_eq!(direction(10.0, 300.0), Some(ResizeDirection::West));
+        assert_eq!(direction(10.5, 300.0), None);
+        assert_eq!(direction(790.0, 300.0), Some(ResizeDirection::East));
+        assert_eq!(direction(789.5, 300.0), None);
+    }
+
+    #[test]
+    fn zero_sized_windows_have_no_edges() {
+        assert_eq!(edge_resize_direction(0.0, 600.0, Vec2::new(0.0, 0.0)), None);
+        assert_eq!(edge_resize_direction(800.0, 0.0, Vec2::new(0.0, 0.0)), None);
     }
 }

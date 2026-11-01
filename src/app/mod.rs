@@ -140,6 +140,8 @@ pub struct App {
     hud_alpha: f32,
     ui_hovered: bool,
     filmstrip_hovered: bool,
+    /// True while the pointer is over a borderless-window resize edge.
+    resize_hovered: bool,
     scroll_filmstrip: bool,
     photo_fade: f32,
     photo_fade_start: Instant,
@@ -237,6 +239,7 @@ impl App {
             hud_alpha: 1.0,
             ui_hovered: false,
             filmstrip_hovered: false,
+            resize_hovered: false,
             scroll_filmstrip: true,
             photo_fade: 1.0,
             photo_fade_start: now,
@@ -742,6 +745,16 @@ impl ApplicationHandler<UserEvent> for App {
                 }
 
                 if let Some(window) = &self.window {
+                    // egui owns the cursor icon everywhere else, but the
+                    // resize edges are outside its UI.
+                    let point = Vec2::new(position.x as f32, position.y as f32);
+                    if let Some(direction) = self.resize_direction(point) {
+                        window.set_cursor(CursorIcon::from(direction));
+                        self.resize_hovered = true;
+                    } else if self.resize_hovered {
+                        window.set_cursor(CursorIcon::Default);
+                        self.resize_hovered = false;
+                    }
                     window.request_redraw();
                 }
             }
@@ -749,6 +762,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.cursor = None;
                 self.dragging = false;
                 self.drag_last = None;
+                self.resize_hovered = false;
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if !response.consumed && self.camera.has_image() {
