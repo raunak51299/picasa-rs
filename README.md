@@ -25,7 +25,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   mouse movement and fade away when idle.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
-- **View rotation** — rotate the photo by 90° without re-decoding it.
+- **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
+  rewriting its EXIF orientation after confirmation; the compressed pixels are
+  never re-encoded. `Shift+R`/`L` keeps the old view-only rotation.
 
 ## Requirements
 
@@ -87,7 +89,9 @@ $env:RUST_LOG = "info"
 | Drag | Pan |
 | Double-click / `1` | Toggle fit and 1:1 |
 | `0` / `Space` | Reset the view |
-| `R` / `L` | Rotate the view clockwise / counter-clockwise |
+| `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
+| `Ctrl+Left` / `Ctrl+Right` | Rotate and save |
+| `Shift+R` / `Shift+L` | Rotate the view only |
 | `H` | Show the help hint |
 | `Esc` / `Q` | Close |
 | Click outside the photo | Close |

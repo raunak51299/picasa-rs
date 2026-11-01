@@ -6,20 +6,49 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 use winit::window::CursorIcon;
 
+use crate::loader::JobKind;
+use crate::rotate;
 use crate::viewer::camera::Vec2;
 
-use super::{App, HELP_DURATION, UiAction};
+use super::{App, HELP_DURATION, RotationRequest, TOAST_DURATION, Toast, UiAction, truncate};
 
 impl App {
     pub(super) fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, repeat: bool) {
+        if self.pending_rotation.is_some() {
+            if !repeat {
+                match code {
+                    KeyCode::Enter | KeyCode::KeyY => self.confirm_rotation(),
+                    KeyCode::Escape | KeyCode::KeyN => self.pending_rotation = None,
+                    _ => {}
+                }
+            }
+            self.record_activity();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            return;
+        }
+
         match code {
             KeyCode::Escape | KeyCode::KeyQ => {
                 if !repeat {
                     event_loop.exit();
                 }
             }
-            KeyCode::ArrowLeft => self.navigate_by(-1),
-            KeyCode::ArrowRight => self.navigate_by(1),
+            KeyCode::ArrowLeft => {
+                if self.modifiers.control_key() {
+                    self.request_rotation(false);
+                } else {
+                    self.navigate_by(-1);
+                }
+            }
+            KeyCode::ArrowRight => {
+                if self.modifiers.control_key() {
+                    self.request_rotation(true);
+                } else {
+                    self.navigate_by(1);
+                }
+            }
             KeyCode::Home => {
                 if self.nav.first() {
                     self.on_current_changed();
@@ -45,12 +74,20 @@ impl App {
             }
             KeyCode::KeyR => {
                 if !repeat {
-                    self.camera.rotate(std::f32::consts::FRAC_PI_2);
+                    if self.modifiers.shift_key() {
+                        self.camera.rotate(std::f32::consts::FRAC_PI_2);
+                    } else {
+                        self.request_rotation(true);
+                    }
                 }
             }
             KeyCode::KeyL => {
                 if !repeat {
-                    self.camera.rotate(-std::f32::consts::FRAC_PI_2);
+                    if self.modifiers.shift_key() {
+                        self.camera.rotate(-std::f32::consts::FRAC_PI_2);
+                    } else {
+                        self.request_rotation(false);
+                    }
                 }
             }
             KeyCode::KeyH => {
@@ -86,13 +123,75 @@ impl App {
         }
     }
 
+    fn request_rotation(&mut self, clockwise: bool) {
+        let path = self.nav.current_path().to_path_buf();
+        if !rotate::is_supported(&path) {
+            self.toast = Some(Toast {
+                text: "Persistent rotation is only supported for JPEG files".to_string(),
+                until: Instant::now() + TOAST_DURATION,
+            });
+            return;
+        }
+        self.pending_rotation = Some(RotationRequest { path, clockwise });
+    }
+
+    fn confirm_rotation(&mut self) {
+        let Some(request) = self.pending_rotation.take() else {
+            return;
+        };
+        let name = request
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        match rotate::rotate_file(&request.path, request.clockwise) {
+            Ok(orientation) => {
+                self.photos.remove(&request.path);
+                self.thumbs.remove(&request.path);
+                self.failed_full.remove(&request.path);
+                self.failed_thumb.remove(&request.path);
+                self.reload_full.insert(request.path.clone());
+                self.reload_thumb.insert(request.path.clone());
+
+                if let Some(loader) = &self.loader {
+                    if !loader.has_in_flight(&request.path, JobKind::Full) {
+                        self.reload_full.remove(&request.path);
+                    }
+                    if !loader.has_in_flight(&request.path, JobKind::Thumb) {
+                        self.reload_thumb.remove(&request.path);
+                    }
+                }
+
+                self.toast = Some(Toast {
+                    text: format!("Rotated {name}"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+                log::info!(
+                    "rotated {} to EXIF orientation {orientation}",
+                    request.path.display()
+                );
+                self.camera.clear_image();
+                self.on_current_changed();
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not rotate {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     pub(super) fn apply_action(&mut self, action: UiAction) {
         match action {
             UiAction::Navigate(index) => self.navigate_to(index),
             UiAction::Fit => self.camera.reset_fit(),
             UiAction::ActualSize => self.camera.toggle_actual_size(self.viewport_center()),
-            UiAction::RotateLeft => self.camera.rotate(-std::f32::consts::FRAC_PI_2),
-            UiAction::RotateRight => self.camera.rotate(std::f32::consts::FRAC_PI_2),
+            UiAction::RotatePersist(clockwise) => self.request_rotation(clockwise),
+            UiAction::ConfirmRotation => self.confirm_rotation(),
+            UiAction::CancelRotation => self.pending_rotation = None,
             UiAction::ZoomIn => self.camera.zoom_at(self.viewport_center(), 1.25),
             UiAction::ZoomOut => self.camera.zoom_at(self.viewport_center(), 0.8),
             UiAction::SetZoom(scale) => self

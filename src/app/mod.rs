@@ -15,7 +15,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
 use crate::loader::{Loader, LoaderEvent};
@@ -38,6 +38,11 @@ struct Toast {
     until: Instant,
 }
 
+struct RotationRequest {
+    path: PathBuf,
+    clockwise: bool,
+}
+
 pub enum UserEvent {
     /// A loader result is waiting in the loader channel.
     LoaderReady,
@@ -48,8 +53,9 @@ enum UiAction {
     Navigate(usize),
     Fit,
     ActualSize,
-    RotateLeft,
-    RotateRight,
+    RotatePersist(bool),
+    ConfirmRotation,
+    CancelRotation,
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
@@ -77,6 +83,9 @@ pub struct App {
     deferred_loader_events: Vec<LoaderEvent>,
     failed_full: HashMap<PathBuf, String>,
     failed_thumb: HashSet<PathBuf>,
+    /// Files whose cached pixels must be replaced after a persistent rotation.
+    reload_full: HashSet<PathBuf>,
+    reload_thumb: HashSet<PathBuf>,
     cursor: Option<PhysicalPosition<f64>>,
     dragging: bool,
     drag_last: Option<PhysicalPosition<f64>>,
@@ -90,6 +99,8 @@ pub struct App {
     photo_fade_start: Instant,
     show_help_until: Instant,
     toast: Option<Toast>,
+    pending_rotation: Option<RotationRequest>,
+    modifiers: ModifiersState,
     last_click: Option<(Instant, PhysicalPosition<f64>)>,
     quit_requested: bool,
     startup_photo_ready: bool,
@@ -150,6 +161,8 @@ impl App {
             deferred_loader_events: Vec::new(),
             failed_full: HashMap::new(),
             failed_thumb: HashSet::new(),
+            reload_full: HashSet::new(),
+            reload_thumb: HashSet::new(),
             cursor: None,
             dragging: false,
             drag_last: None,
@@ -163,6 +176,8 @@ impl App {
             photo_fade_start: now,
             show_help_until: now + HELP_DURATION,
             toast: None,
+            pending_rotation: None,
+            modifiers: ModifiersState::empty(),
             last_click: None,
             quit_requested: false,
             startup_photo_ready: false,
@@ -643,6 +658,9 @@ impl ApplicationHandler<UserEvent> for App {
                 {
                     self.handle_key(event_loop, code, event.repeat);
                 }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
             }
             WindowEvent::Focused(false) => {
                 self.dragging = false;

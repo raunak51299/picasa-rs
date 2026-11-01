@@ -246,6 +246,11 @@ impl Loader {
         self.request(path, index, JobKind::Thumb, priority);
     }
 
+    /// Whether a decode for this file and kind is already queued or running.
+    pub fn has_in_flight(&self, path: &Path, kind: JobKind) -> bool {
+        lock(&self.shared.in_flight).contains(&(path.to_path_buf(), kind))
+    }
+
     fn request(&self, path: &Path, index: usize, kind: JobKind, priority: u8) {
         if !claim_job(&self.shared.in_flight, path, kind) {
             return;
@@ -284,9 +289,11 @@ fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, sender: Se
             decode_job(&shared, &job)
         };
 
+        // Clear in-flight before waking the UI so a handler that re-requests
+        // this file is not rejected as a duplicate.
+        lock(&shared.in_flight).remove(&(job.path.clone(), job.kind));
         let _ = sender.send(event);
         let _ = proxy.send_event(UserEvent::LoaderReady);
-        lock(&shared.in_flight).remove(&(job.path, job.kind));
     }
 }
 

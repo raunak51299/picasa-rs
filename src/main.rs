@@ -9,6 +9,7 @@ mod app;
 mod loader;
 mod preview;
 mod renderer;
+mod rotate;
 mod viewer;
 
 use std::path::{Path, PathBuf};
@@ -83,7 +84,9 @@ CONTROLS:
     Drag                pan
     Double click / 1    toggle fit and 1:1
     0 / Space           reset view
-    R / L               rotate view clockwise / counter-clockwise
+    R / L               rotate clockwise / counter-clockwise and save
+    Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
+    Shift + R / L       rotate the view only
     H                   show help
     Esc / Q             close
 
