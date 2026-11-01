@@ -235,6 +235,36 @@ impl App {
                 });
         }
 
+        let windowed = self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.fullscreen().is_none());
+        let close_alpha = if windowed { 1.0 } else { self.hud_alpha };
+        if close_alpha > 0.01 {
+            egui::Area::new(egui::Id::unique("viewer-close"))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    let response = ui
+                        .add(
+                            egui::Button::new(egui::RichText::new("×").size(21.0).color(
+                                egui::Color32::from_white_alpha((235.0 * close_alpha) as u8),
+                            ))
+                            .fill(egui::Color32::from_black_alpha((150.0 * close_alpha) as u8))
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_white_alpha((35.0 * close_alpha) as u8),
+                            ))
+                            .corner_radius(egui::CornerRadius::same(18))
+                            .min_size(egui::vec2(36.0, 36.0)),
+                        )
+                        .on_hover_text("Close viewer");
+                    if response.clicked() {
+                        actions.push(UiAction::Close);
+                    }
+                });
+        }
+
         if show_filmstrip {
             let alpha = self.hud_alpha;
             let mut scroll_to_current = self.scroll_filmstrip;
@@ -695,7 +725,7 @@ impl App {
 
         if self.show_info {
             egui::Area::new(egui::Id::unique("info-panel"))
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 64.0))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::NONE
