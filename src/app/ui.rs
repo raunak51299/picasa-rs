@@ -10,7 +10,9 @@ impl App {
         let now = Instant::now();
         let screen = ctx.viewport_rect();
         let screen_size = screen.size();
-        let current_path = self.nav.current_path().to_path_buf();
+        let Some(current_path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
+            return actions;
+        };
         let current_index = self.nav.current();
         let loading =
             self.current_photo().is_none() && !self.failed_full.contains_key(&current_path);
@@ -32,6 +34,12 @@ impl App {
                 request.clockwise,
             )
         });
+        let deletion = self.pending_delete.as_ref().map(|path| {
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let show_controls = self.hud_alpha > 0.01;
         let pointer_near_bottom = self
@@ -46,6 +54,7 @@ impl App {
             && !show_help
             && toast.is_none()
             && rotation.is_none()
+            && deletion.is_none()
         {
             return actions;
         }
@@ -183,6 +192,9 @@ impl App {
                                 }
                                 if small_button(ui, "Rot +").clicked() {
                                     actions.push(UiAction::RotatePersist(true));
+                                }
+                                if small_button(ui, "Delete").clicked() {
+                                    actions.push(UiAction::Delete);
                                 }
                                 if small_button(ui, "X").clicked() {
                                     actions.push(UiAction::Close);
@@ -457,6 +469,47 @@ impl App {
                 });
         }
 
+        if let Some(file_name) = deletion {
+            egui::Area::new(egui::Id::unique("delete-confirm"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(210))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(18))
+                        .show(ui, |ui| {
+                            ui.set_max_width(430.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Move {file_name} to the Recycle Bin?"
+                                ))
+                                .size(14.0)
+                                .strong(),
+                            );
+                            ui.add_space(5.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "You can restore the file from the Recycle Bin. \
+                                     The viewer advances to the next photo.",
+                                )
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(170)),
+                            );
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                if small_button(ui, "Delete").clicked() {
+                                    actions.push(UiAction::ConfirmDelete);
+                                }
+                                if small_button(ui, "Cancel").clicked() {
+                                    actions.push(UiAction::CancelDelete);
+                                }
+                            });
+                        });
+                });
+        }
+
         if let Some(text) = toast {
             egui::Area::new(egui::Id::unique("toast"))
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
@@ -497,7 +550,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   Space: slideshow   |   R/L: rotate + save   |   Esc: stop / close",
+                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   Space: slideshow   |   Del: recycle   |   R/L: rotate + save   |   Esc: stop / close",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),

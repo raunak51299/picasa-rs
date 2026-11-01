@@ -88,8 +88,8 @@ impl Navigation {
         self.current
     }
 
-    pub fn current_path(&self) -> &Path {
-        &self.paths[self.current]
+    pub fn current_path(&self) -> Option<&Path> {
+        self.paths.get(self.current).map(PathBuf::as_path)
     }
 
     pub fn path(&self, index: usize) -> Option<&Path> {
@@ -145,6 +145,26 @@ impl Navigation {
 
     pub fn is_near(&self, index: usize, radius: usize) -> bool {
         self.current.abs_diff(index) <= radius
+    }
+
+    /// Remove the current image and return its path. The selection moves to
+    /// the image that took its place, or to the previous one at the end.
+    pub fn remove_current(&mut self) -> Option<PathBuf> {
+        if self.paths.is_empty() {
+            return None;
+        }
+
+        let removed = self.paths.remove(self.current);
+        self.index_by_path = self
+            .paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path.clone(), index))
+            .collect();
+        if self.current >= self.paths.len() {
+            self.current = self.paths.len().saturating_sub(1);
+        }
+        Some(removed)
     }
 }
 
@@ -204,10 +224,11 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_images, natural_cmp};
+    use super::{Navigation, list_images, natural_cmp};
     use std::cmp::Ordering;
+    use std::collections::HashMap;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn temp_dir(name: &str) -> PathBuf {
         let directory = std::env::temp_dir().join(format!(
@@ -248,6 +269,36 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn removing_advances_and_clamps_the_selection() {
+        let mut navigation = Navigation {
+            paths: ["a.jpg", "b.jpg", "c.jpg"]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+            index_by_path: HashMap::new(),
+            current: 1,
+        };
+        navigation.index_by_path = navigation
+            .paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path.clone(), index))
+            .collect();
+
+        assert_eq!(navigation.remove_current(), Some(PathBuf::from("b.jpg")));
+        assert_eq!(navigation.current(), 1);
+        assert_eq!(navigation.current_path(), Some(Path::new("c.jpg")));
+
+        assert_eq!(navigation.remove_current(), Some(PathBuf::from("c.jpg")));
+        assert_eq!(navigation.current(), 0);
+        assert_eq!(navigation.current_path(), Some(Path::new("a.jpg")));
+
+        assert_eq!(navigation.remove_current(), Some(PathBuf::from("a.jpg")));
+        assert_eq!(navigation.current_path(), None);
+        assert_eq!(navigation.remove_current(), None);
     }
 
     #[test]

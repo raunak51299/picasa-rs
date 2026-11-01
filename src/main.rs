@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod delete;
 mod loader;
 mod preview;
 mod renderer;
@@ -86,6 +87,7 @@ CONTROLS:
     0                   reset view
     Space / S           start / pause slideshow
     [ / ]               shorten / lengthen slideshow interval
+    Delete              move the current photo to the Recycle Bin
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only

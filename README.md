@@ -26,6 +26,8 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
   (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
   slideshow without closing the viewer.
+- **Recycle Bin delete** — `Delete` asks for confirmation and moves the current
+  photo to the Windows Recycle Bin, then advances to the next image.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
 - **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
@@ -94,6 +96,7 @@ $env:RUST_LOG = "info"
 | `0` | Reset the view |
 | `Space` / `S` | Start / pause the slideshow |
 | `[` / `]` | Shorten / lengthen the slideshow interval |
+| `Delete` | Move the current photo to the Recycle Bin (asks first) |
 | `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
 | `Ctrl+Left` / `Ctrl+Right` | Rotate and save |
 | `Shift+R` / `Shift+L` | Rotate the view only |

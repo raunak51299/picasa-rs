@@ -6,6 +6,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 use winit::window::CursorIcon;
 
+use crate::delete;
 use crate::loader::JobKind;
 use crate::rotate;
 use crate::viewer::camera::Vec2;
@@ -15,6 +16,21 @@ use super::{App, HELP_DURATION, RotationRequest, TOAST_DURATION, Toast, UiAction
 
 impl App {
     pub(super) fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, repeat: bool) {
+        if self.pending_delete.is_some() {
+            if !repeat {
+                match code {
+                    KeyCode::Enter | KeyCode::KeyY => self.confirm_delete(),
+                    KeyCode::Escape | KeyCode::KeyN => self.pending_delete = None,
+                    _ => {}
+                }
+            }
+            self.record_activity();
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            return;
+        }
+
         if self.pending_rotation.is_some() {
             if !repeat {
                 match code {
@@ -108,6 +124,11 @@ impl App {
                     }
                 }
             }
+            KeyCode::Delete => {
+                if !repeat {
+                    self.request_delete();
+                }
+            }
             KeyCode::KeyH => {
                 if !repeat {
                     self.show_help_until = Instant::now() + HELP_DURATION;
@@ -183,8 +204,62 @@ impl App {
         });
     }
 
+    fn request_delete(&mut self) {
+        let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
+            return;
+        };
+        self.pending_delete = Some(path);
+    }
+
+    fn confirm_delete(&mut self) {
+        let Some(path) = self.pending_delete.take() else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        match delete::move_to_recycle_bin(&path) {
+            Ok(()) => {
+                self.photos.remove(&path);
+                self.thumbs.remove(&path);
+                self.failed_full.remove(&path);
+                self.failed_thumb.remove(&path);
+                self.reload_full.remove(&path);
+                self.reload_thumb.remove(&path);
+
+                if let Some(index) = self.nav.index_of(&path) {
+                    self.nav.set_current(index);
+                    self.nav.remove_current();
+                }
+
+                self.toast = Some(Toast {
+                    text: format!("Moved {name} to the Recycle Bin"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+                log::info!("moved {} to the Recycle Bin", path.display());
+
+                if self.nav.len() == 0 {
+                    self.quit_requested = true;
+                } else {
+                    self.on_current_changed();
+                }
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not delete {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     fn request_rotation(&mut self, clockwise: bool) {
-        let path = self.nav.current_path().to_path_buf();
+        let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
+            return;
+        };
         if !rotate::is_supported(&path) {
             self.toast = Some(Toast {
                 text: "Persistent rotation is only supported for JPEG files".to_string(),
@@ -252,6 +327,9 @@ impl App {
             UiAction::RotatePersist(clockwise) => self.request_rotation(clockwise),
             UiAction::ConfirmRotation => self.confirm_rotation(),
             UiAction::CancelRotation => self.pending_rotation = None,
+            UiAction::Delete => self.request_delete(),
+            UiAction::ConfirmDelete => self.confirm_delete(),
+            UiAction::CancelDelete => self.pending_delete = None,
             UiAction::ZoomIn => self.camera.zoom_at(self.viewport_center(), 1.25),
             UiAction::ZoomOut => self.camera.zoom_at(self.viewport_center(), 0.8),
             UiAction::SetZoom(scale) => self

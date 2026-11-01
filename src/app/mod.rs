@@ -7,7 +7,7 @@ mod slideshow;
 mod ui;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -60,6 +60,9 @@ enum UiAction {
     RotatePersist(bool),
     ConfirmRotation,
     CancelRotation,
+    Delete,
+    ConfirmDelete,
+    CancelDelete,
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
@@ -107,6 +110,7 @@ pub struct App {
     show_help_until: Instant,
     toast: Option<Toast>,
     pending_rotation: Option<RotationRequest>,
+    pending_delete: Option<PathBuf>,
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
@@ -148,7 +152,10 @@ impl App {
         // limit and is replaced with the real GPU limit once it is known.
         let loader = Loader::new(proxy.clone(), 8192);
         loader.set_current(nav.current());
-        loader.request_full(nav.current_path(), nav.current(), 3);
+        let first_path = nav
+            .current_path()
+            .expect("a fresh navigation listing always has a current image");
+        loader.request_full(first_path, nav.current(), 3);
         log::info!(
             "startup[{:.1}ms]: loader started, current image queued",
             crate::startup_ms()
@@ -187,6 +194,7 @@ impl App {
             show_help_until: now + HELP_DURATION,
             toast: None,
             pending_rotation: None,
+            pending_delete: None,
             slideshow: None,
             slideshow_interval: DEFAULT_INTERVAL,
             modifiers: ModifiersState::empty(),
@@ -217,15 +225,17 @@ impl App {
         };
 
         let preview_position = position.unwrap_or(PhysicalPosition::new(0, 0));
-        match PreviewWindow::show(
-            self.nav.current_path(),
-            preview_position.x,
-            preview_position.y,
-            size.width,
-            size.height,
-        ) {
-            Ok(preview) => self.preview = Some(preview),
-            Err(error) => log::warn!("could not show the startup preview: {error:#}"),
+        if let Some(path) = self.nav.current_path() {
+            match PreviewWindow::show(
+                path,
+                preview_position.x,
+                preview_position.y,
+                size.width,
+                size.height,
+            ) {
+                Ok(preview) => self.preview = Some(preview),
+                Err(error) => log::warn!("could not show the startup preview: {error:#}"),
+            }
         }
 
         let mut attributes = Window::default_attributes()
@@ -249,7 +259,7 @@ impl App {
         let title_name = self
             .nav
             .current_path()
-            .file_name()
+            .and_then(Path::file_name)
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
@@ -359,7 +369,10 @@ impl App {
             slideshow.defer(Instant::now());
         }
 
-        let path = self.nav.current_path().to_path_buf();
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            self.camera.clear_image();
+            return;
+        };
         if let Some(photo) = self.photos.get(&path) {
             self.camera
                 .set_image(photo.display_width as f32, photo.display_height as f32);
@@ -395,7 +408,7 @@ impl App {
 
 impl App {
     fn current_photo(&self) -> Option<&GpuPhoto> {
-        self.photos.get(self.nav.current_path())
+        self.photos.get(self.nav.current_path()?)
     }
 
     fn record_activity(&mut self) {
@@ -511,13 +524,15 @@ impl App {
         let current_path = self.nav.current_path();
 
         let render_result = {
-            let photo = self.photos.get(current_path).map(|photo| PhotoDraw {
-                photo,
-                center: [center.x, center.y],
-                half_size: [half_size.x, half_size.y],
-                angle,
-                alpha,
-            });
+            let photo = current_path
+                .and_then(|path| self.photos.get(path))
+                .map(|photo| PhotoDraw {
+                    photo,
+                    center: [center.x, center.y],
+                    half_size: [half_size.x, half_size.y],
+                    angle,
+                    alpha,
+                });
 
             self.renderer
                 .as_mut()

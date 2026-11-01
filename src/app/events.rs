@@ -33,6 +33,17 @@ impl App {
             }
         }
 
+        let event_path = match &event {
+            LoaderEvent::Full(full) => &full.path,
+            LoaderEvent::Thumb(thumb) => &thumb.path,
+            LoaderEvent::Error { path, .. } | LoaderEvent::Stale { path, .. } => path,
+        };
+        if self.nav.index_of(event_path).is_none() {
+            // The file was deleted (or the folder changed) while a decode was
+            // in flight; its result must not resurrect the old entry.
+            return;
+        }
+
         match event {
             LoaderEvent::Full(full) => {
                 let index = full.index;
