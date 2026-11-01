@@ -39,7 +39,7 @@ adds.
 | Open with / associations | Installed as an "Open with" handler. | Done: `packaging/windows/install.ps1` registers a per-user ProgID, `OpenWithProgids`, a Default Programs `Capabilities` entry, and "Open with picasa-rs" verbs for image files and folders. The CLI path argument remains the entry point. |
 | Single instance | A second launch reused the running viewer. | Done: a session-scoped named mutex plus named pipe forwards the requested file or folder to the existing window, which also comes to the foreground. A launch without a path only focuses the window. |
 | Preferences | Remembered slideshow and viewer settings. | Done: `%APPDATA%\picasa-rs\config.toml` stores the slideshow interval, scrim opacity, and delete confirmation. Interval changes save automatically; malformed files fall back to defaults. |
-| Optional formats | Picasa read a wide range of camera formats. | Optional AVIF/HEIC/RAW features only where a dependency can be verified; otherwise document the gap. |
+| Optional formats | Picasa read a wide range of camera formats. | Skipped after probing: AVIF needs `image`'s `avif-native` feature plus a system libdav1d ≥ 1.3 found by pkg-config (the probe failed here, and the pure-Rust `avif` feature only encodes); HEIC/HEIF needs the native libheif library; RAW would need `rawler` (LGPL-2.1) plus demosaicing. No unverifiable dependency was added. |
 
 ## Deliberately out of scope
 

@@ -324,5 +324,10 @@ src/
   8192 or 16384 px). Larger images are downscaled before upload.
 - Animated files are decoded into full-canvas frames and capped at 600 frames
   or 256 MiB; larger animations show their first frame instead.
+- AVIF, HEIC/HEIF, and camera RAW are not decoded. AVIF would need `image`'s
+  `avif-native` feature and a system libdav1d found by pkg-config (the pure-Rust
+  `avif` feature only encodes); HEIC needs the native libheif library; RAW would
+  need `rawler` (LGPL-2.1) plus demosaicing. These dependencies could not be
+  verified on the development machine, so no optional features were added.
 - The viewer is a single-image overlay, not a library manager: it does not index
   folders recursively or maintain a database.
