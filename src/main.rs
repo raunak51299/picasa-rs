@@ -19,7 +19,6 @@ use anyhow::{Context, Result, bail};
 use winit::event_loop::{ControlFlow, EventLoop};
 
 use crate::app::UserEvent;
-use crate::loader::decoder;
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
@@ -123,24 +122,13 @@ fn resolve_initial_image(args: &[String]) -> Result<PathBuf> {
 }
 
 fn first_image_in(directory: &Path) -> Result<PathBuf> {
-    let mut images: Vec<PathBuf> = std::fs::read_dir(directory)
-        .with_context(|| format!("could not read {}", directory.display()))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && decoder::is_supported(path))
-        .collect();
-
-    images.sort_by(|a, b| {
-        viewer::navigation::natural_cmp(
-            &a.file_name().unwrap_or_default().to_string_lossy(),
-            &b.file_name().unwrap_or_default().to_string_lossy(),
-        )
-    });
-
-    images.into_iter().next().with_context(|| {
-        format!(
-            "directory {} contains no supported images",
-            directory.display()
-        )
-    })
+    viewer::navigation::list_images(directory)?
+        .into_iter()
+        .next()
+        .with_context(|| {
+            format!(
+                "directory {} contains no supported images",
+                directory.display()
+            )
+        })
 }

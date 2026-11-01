@@ -14,6 +14,25 @@ pub struct Navigation {
     current: usize,
 }
 
+/// List the supported images in `directory`, sorted naturally by filename.
+pub fn list_images(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
+        .with_context(|| format!("could not read directory {}", directory.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && decoder::is_supported(path))
+        .collect();
+
+    paths.sort_by(|a, b| {
+        natural_cmp(
+            &a.file_name().unwrap_or_default().to_string_lossy(),
+            &b.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    });
+
+    Ok(paths)
+}
+
 impl Navigation {
     /// Scan the target's directory for supported images, sort them naturally,
     /// and select the target image.
@@ -24,19 +43,7 @@ impl Navigation {
             .parent()
             .with_context(|| format!("{} has no parent directory", target.display()))?;
 
-        let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
-            .with_context(|| format!("could not read directory {}", directory.display()))?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file() && decoder::is_supported(path))
-            .collect();
-
-        paths.sort_by(|a, b| {
-            natural_cmp(
-                &a.file_name().unwrap_or_default().to_string_lossy(),
-                &b.file_name().unwrap_or_default().to_string_lossy(),
-            )
-        });
+        let paths = list_images(directory)?;
 
         let current = paths.iter().position(|path| path == &target).or_else(|| {
             // Paths can differ in casing on Windows; fall back to a
@@ -197,8 +204,51 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::natural_cmp;
+    use super::{list_images, natural_cmp};
     use std::cmp::Ordering;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "picasa-rs-navigation-{}-{name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn file_names(directory: &std::path::Path) -> Vec<String> {
+        list_images(directory)
+            .unwrap()
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn lists_supported_images_case_insensitively_in_natural_order() {
+        let directory = temp_dir("listing");
+        for name in [
+            "photo10.JPG",
+            "photo2.jpg",
+            "photo1.PnG",
+            "notes.txt",
+            "archive.zip",
+            "photo02.jpeg",
+        ] {
+            fs::write(directory.join(name), b"not an image").unwrap();
+        }
+        fs::create_dir(directory.join("folder.jpg")).unwrap();
+
+        assert_eq!(
+            file_names(&directory),
+            ["photo1.PnG", "photo2.jpg", "photo02.jpeg", "photo10.JPG"]
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn natural_numbers() {
