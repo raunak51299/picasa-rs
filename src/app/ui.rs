@@ -112,8 +112,12 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(12, 7))
                         .show(ui, |ui| {
                             ui.set_opacity(alpha);
+                            // In a photo-sized window the single HUD row can be
+                            // wider than the window. Wrap it instead of letting
+                            // the edges clip.
+                            ui.set_max_width((ctx.content_rect().width() - 32.0).max(200.0));
                             ui.spacing_mut().item_spacing.x = 7.0;
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(
                                     egui::RichText::new(truncate(&file_name, 32))
                                         .size(13.0)
