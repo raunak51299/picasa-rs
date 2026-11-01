@@ -1,0 +1,441 @@
+//! HUD, filmstrip, help, and error overlays.
+
+use std::time::Instant;
+
+use super::{App, THUMB_RADIUS, UiAction, truncate};
+
+impl App {
+    pub(super) fn build_ui(&mut self, ctx: &egui::Context) -> Vec<UiAction> {
+        let mut actions = Vec::new();
+        let now = Instant::now();
+        let screen = ctx.viewport_rect();
+        let screen_size = screen.size();
+        let current_path = self.nav.current_path().to_path_buf();
+        let current_index = self.nav.current();
+        let loading =
+            self.current_photo().is_none() && !self.failed_full.contains_key(&current_path);
+        let error = self.failed_full.get(&current_path).cloned();
+        let show_help = now < self.show_help_until;
+        let toast = self
+            .toast
+            .as_ref()
+            .filter(|toast| now < toast.until)
+            .map(|toast| toast.text.clone());
+
+        let show_controls = self.hud_alpha > 0.01;
+        let pointer_near_bottom = self
+            .cursor
+            .map(|position| position.y as f32 > self.camera.viewport.y - 230.0)
+            .unwrap_or(false);
+        let show_filmstrip = show_controls && (pointer_near_bottom || self.filmstrip_hovered);
+
+        if !show_controls && !loading && error.is_none() && !show_help && toast.is_none() {
+            return actions;
+        }
+
+        if show_controls {
+            let alpha = self.hud_alpha;
+            let bottom_offset = if show_filmstrip { 108.0 } else { 18.0 };
+            let photo = self.current_photo();
+            let file_name = current_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let dimensions = photo
+                .map(|photo| format!("{} × {}", photo.display_width, photo.display_height))
+                .unwrap_or_else(|| "—".to_string());
+            let zoom = if self.camera.has_image() {
+                if self.camera.fit_mode {
+                    format!("Fit {:.0}%", self.camera.zoom_percent())
+                } else {
+                    format!("{:.0}%", self.camera.zoom_percent())
+                }
+            } else {
+                "—".to_string()
+            };
+            let rotation = self.camera.rotation_degrees();
+            let index_label = format!("{} / {}", current_index + 1, self.nav.len());
+
+            egui::Area::new(egui::Id::unique("controls"))
+                .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -bottom_offset))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha((190.0 * alpha) as u8))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_white_alpha((22.0 * alpha) as u8),
+                        ))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::symmetric(12, 7))
+                        .show(ui, |ui| {
+                            ui.set_opacity(alpha);
+                            ui.spacing_mut().item_spacing.x = 7.0;
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(truncate(&file_name, 32))
+                                        .size(13.0)
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new(dimensions)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_gray(160)),
+                                );
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new(index_label)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_gray(185)),
+                                );
+                                ui.label(
+                                    egui::RichText::new(zoom)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_gray(185)),
+                                );
+                                if rotation != 0 {
+                                    ui.label(
+                                        egui::RichText::new(format!("{rotation}°"))
+                                            .size(12.0)
+                                            .color(egui::Color32::from_gray(185)),
+                                    );
+                                }
+                                ui.separator();
+
+                                if small_button(ui, "−").clicked() {
+                                    actions.push(UiAction::ZoomOut);
+                                }
+
+                                let (min_zoom, max_zoom) = if self.camera.has_image() {
+                                    (
+                                        (self.camera.min_scale * 100.0).max(1.0),
+                                        (self.camera.max_scale * 100.0).max(2.0),
+                                    )
+                                } else {
+                                    (10.0, 400.0)
+                                };
+                                let mut zoom_value = if self.camera.has_image() {
+                                    self.camera.zoom_percent().clamp(min_zoom, max_zoom)
+                                } else {
+                                    100.0
+                                };
+                                ui.spacing_mut().slider_width = 90.0;
+                                let slider =
+                                    egui::Slider::new(&mut zoom_value, min_zoom..=max_zoom)
+                                        .logarithmic(true)
+                                        .show_value(false);
+                                if ui.add(slider).changed() {
+                                    actions.push(UiAction::SetZoom(zoom_value / 100.0));
+                                }
+
+                                if small_button(ui, "+").clicked() {
+                                    actions.push(UiAction::ZoomIn);
+                                }
+
+                                if small_button(ui, "Fit").clicked() {
+                                    actions.push(UiAction::Fit);
+                                }
+                                if small_button(ui, "1:1").clicked() {
+                                    actions.push(UiAction::ActualSize);
+                                }
+                                if small_button(ui, "Rot -").clicked() {
+                                    actions.push(UiAction::RotateLeft);
+                                }
+                                if small_button(ui, "Rot +").clicked() {
+                                    actions.push(UiAction::RotateRight);
+                                }
+                                if small_button(ui, "X").clicked() {
+                                    actions.push(UiAction::Close);
+                                }
+                            });
+                        });
+                });
+        }
+
+        if show_filmstrip {
+            let alpha = self.hud_alpha;
+            let mut scroll_to_current = self.scroll_filmstrip;
+            let mut hovered = false;
+            let start = current_index.saturating_sub(THUMB_RADIUS);
+            let end = (current_index + THUMB_RADIUS + 1).min(self.nav.len());
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+
+            egui::Area::new(egui::Id::unique("filmstrip"))
+                .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha((180.0 * alpha) as u8))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_white_alpha((18.0 * alpha) as u8),
+                        ))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::symmetric(9, 7))
+                        .show(ui, |ui| {
+                            ui.set_opacity(alpha);
+                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                            egui::ScrollArea::horizontal()
+                                .id_salt("filmstrip_scroll")
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                )
+                                .max_height(76.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        for index in start..end {
+                                            let Some(path) = self.nav.path(index) else {
+                                                continue;
+                                            };
+                                            let selected = index == current_index;
+                                            let (rect, response) = ui.allocate_exact_size(
+                                                egui::vec2(64.0, 64.0),
+                                                egui::Sense::click(),
+                                            );
+
+                                            if let Some(texture) = self.thumbs.get(path) {
+                                                let texture_size = texture.size_vec2();
+                                                let scale = (64.0 / texture_size.x.max(1.0))
+                                                    .min(64.0 / texture_size.y.max(1.0))
+                                                    .min(1.0);
+                                                let draw_size = texture_size * scale;
+                                                let draw_rect = egui::Rect::from_center_size(
+                                                    rect.center(),
+                                                    draw_size,
+                                                );
+                                                ui.painter().image(
+                                                    texture.id(),
+                                                    draw_rect,
+                                                    uv,
+                                                    egui::Color32::WHITE,
+                                                );
+                                            } else {
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    6.0,
+                                                    egui::Color32::from_gray(28),
+                                                );
+                                                let extension = path
+                                                    .extension()
+                                                    .and_then(|extension| extension.to_str())
+                                                    .unwrap_or("?")
+                                                    .to_uppercase();
+                                                ui.painter().text(
+                                                    rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    extension,
+                                                    egui::FontId::proportional(9.0),
+                                                    egui::Color32::from_gray(105),
+                                                );
+                                            }
+
+                                            if selected {
+                                                ui.painter().rect_stroke(
+                                                    rect.expand(1.0),
+                                                    7.0,
+                                                    egui::Stroke::new(
+                                                        2.0,
+                                                        egui::Color32::from_rgb(118, 186, 255),
+                                                    ),
+                                                    egui::StrokeKind::Outside,
+                                                );
+                                            } else if response.hovered() {
+                                                ui.painter().rect_stroke(
+                                                    rect,
+                                                    6.0,
+                                                    egui::Stroke::new(
+                                                        1.0,
+                                                        egui::Color32::from_white_alpha(55),
+                                                    ),
+                                                    egui::StrokeKind::Inside,
+                                                );
+                                            }
+
+                                            let clicked = response.clicked();
+                                            let item_hovered = response.hovered();
+                                            hovered |= item_hovered;
+
+                                            if selected && scroll_to_current {
+                                                response.scroll_to_me(Some(egui::Align::Center));
+                                                scroll_to_current = false;
+                                            }
+
+                                            if clicked {
+                                                actions.push(UiAction::Navigate(index));
+                                            }
+
+                                            let name = path
+                                                .file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                                .to_string();
+                                            response.on_hover_text(name);
+                                        }
+                                    });
+                                });
+                        });
+                });
+
+            self.scroll_filmstrip = scroll_to_current;
+            self.filmstrip_hovered = hovered;
+        } else {
+            self.filmstrip_hovered = false;
+        }
+
+        if loading {
+            let file_name = current_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let thumb = self.thumbs.get(&current_path);
+            egui::Area::new(egui::Id::unique("loading"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(150))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(18))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                if let Some(texture) = thumb {
+                                    let texture_size = texture.size_vec2();
+                                    let max_width = screen_size.x * 0.36;
+                                    let max_height = screen_size.y * 0.36;
+                                    let scale = (max_width / texture_size.x.max(1.0))
+                                        .min(max_height / texture_size.y.max(1.0))
+                                        .min(1.0);
+                                    let draw_size = texture_size * scale;
+                                    let (rect, _) =
+                                        ui.allocate_exact_size(draw_size, egui::Sense::hover());
+                                    ui.painter().image(
+                                        texture.id(),
+                                        rect,
+                                        egui::Rect::from_min_max(
+                                            egui::pos2(0.0, 0.0),
+                                            egui::pos2(1.0, 1.0),
+                                        ),
+                                        egui::Color32::from_white_alpha(190),
+                                    );
+                                    ui.add_space(10.0);
+                                }
+                                ui.add(
+                                    egui::Spinner::new()
+                                        .size(22.0)
+                                        .color(egui::Color32::from_rgb(118, 186, 255)),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(format!("Loading {file_name}…"))
+                                        .size(12.0)
+                                        .color(egui::Color32::from_gray(200)),
+                                );
+                            });
+                        });
+                });
+        }
+
+        if let Some(message) = error {
+            let file_name = current_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            egui::Area::new(egui::Id::unique("error"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(190))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 80, 80)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(18))
+                        .show(ui, |ui| {
+                            ui.set_max_width(460.0);
+                            ui.label(
+                                egui::RichText::new(format!("Could not open {file_name}"))
+                                    .size(14.0)
+                                    .strong(),
+                            );
+                            ui.add_space(6.0);
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(message)
+                                        .size(11.0)
+                                        .color(egui::Color32::from_gray(170)),
+                                )
+                                .wrap(),
+                            );
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new("Press Esc to close, or F5 to retry.")
+                                    .size(11.0)
+                                    .color(egui::Color32::from_gray(130)),
+                            );
+                        });
+                });
+        }
+
+        if let Some(text) = toast {
+            egui::Area::new(egui::Id::unique("toast"))
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(200))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(190, 92, 92)))
+                        .corner_radius(egui::CornerRadius::same(12))
+                        .inner_margin(egui::Margin::symmetric(14, 8))
+                        .show(ui, |ui| {
+                            ui.set_max_width(520.0);
+                            ui.label(
+                                egui::RichText::new(text)
+                                    .size(12.0)
+                                    .color(egui::Color32::from_gray(225)),
+                            );
+                        });
+                });
+        }
+
+        if show_help {
+            let remaining = self.show_help_until.saturating_duration_since(now);
+            let fade = (remaining.as_secs_f32() / 0.6).clamp(0.0, 1.0);
+            egui::Area::new(egui::Id::unique("help"))
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 22.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha((155.0 * fade) as u8))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_white_alpha((18.0 * fade) as u8),
+                        ))
+                        .corner_radius(egui::CornerRadius::same(14))
+                        .inner_margin(egui::Margin::symmetric(14, 8))
+                        .show(ui, |ui| {
+                            ui.set_opacity(fade);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   R/L: rotate   |   Esc: close",
+                                )
+                                .size(12.0)
+                                .color(egui::Color32::from_gray(215)),
+                            );
+                        });
+                });
+        }
+
+        actions
+    }
+}
+
+fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).size(12.0))
+            .fill(egui::Color32::from_white_alpha(14))
+            .corner_radius(egui::CornerRadius::same(9))
+            .min_size(egui::vec2(0.0, 24.0)),
+    )
+}
