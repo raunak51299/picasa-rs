@@ -14,6 +14,7 @@ mod preview;
 mod renderer;
 mod rotate;
 mod save;
+mod share;
 mod viewer;
 
 use std::path::{Path, PathBuf};
@@ -93,6 +94,11 @@ CONTROLS:
     Delete              move the current photo to the Recycle Bin
     I                   show or hide photo metadata
     F                   show or hide color fixes
+    C                   show or hide share actions
+    Ctrl + C            copy the current view to the clipboard
+    Ctrl + Shift + C    copy the file path
+    Ctrl + E            show the file in Explorer
+    Ctrl + Enter        open with the default application
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only

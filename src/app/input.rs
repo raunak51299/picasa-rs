@@ -11,6 +11,7 @@ use crate::delete;
 use crate::loader::JobKind;
 use crate::rotate;
 use crate::save::{self, SaveMode};
+use crate::share;
 use crate::viewer::camera::Vec2;
 
 use super::slideshow::{Slideshow, stepped_interval};
@@ -72,6 +73,8 @@ impl App {
                         self.show_info = false;
                     } else if self.show_fixes {
                         self.show_fixes = false;
+                    } else if self.show_share {
+                        self.show_share = false;
                     } else if self.slideshow.take().is_some() {
                         self.toast = Some(Toast {
                             text: "Slideshow stopped".to_string(),
@@ -163,6 +166,29 @@ impl App {
             KeyCode::KeyF => {
                 if !repeat {
                     self.show_fixes = !self.show_fixes;
+                }
+            }
+            KeyCode::KeyC => {
+                if !repeat {
+                    if self.modifiers.control_key() {
+                        if self.modifiers.shift_key() {
+                            self.copy_current_path();
+                        } else {
+                            self.copy_current_image();
+                        }
+                    } else {
+                        self.show_share = !self.show_share;
+                    }
+                }
+            }
+            KeyCode::KeyE => {
+                if !repeat && self.modifiers.control_key() {
+                    self.reveal_current();
+                }
+            }
+            KeyCode::Enter => {
+                if !repeat && self.modifiers.control_key() {
+                    self.open_current();
                 }
             }
             KeyCode::KeyH => {
@@ -387,6 +413,102 @@ impl App {
         }
     }
 
+    fn copy_current_image(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        match share::copy_image(&path, self.adjustments) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: format!("Copied {name} to the clipboard"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+                log::info!("copied {} to the clipboard", path.display());
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not copy {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
+    fn copy_current_path(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        match share::copy_path(&path) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: "Path copied to the clipboard".to_string(),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not copy the path: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
+    fn open_current(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        match share::open_default(&path) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: format!("Opened {name} in its default application"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not open {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
+    fn reveal_current(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        match share::reveal(&path) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: format!("Showing {name} in Explorer"),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not show {name}: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     fn request_rotation(&mut self, clockwise: bool) {
         let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
             return;
@@ -453,6 +575,11 @@ impl App {
                 }
             }
             UiAction::ToggleFixes => self.show_fixes = !self.show_fixes,
+            UiAction::ToggleShare => self.show_share = !self.show_share,
+            UiAction::CopyImage => self.copy_current_image(),
+            UiAction::CopyPath => self.copy_current_path(),
+            UiAction::OpenDefault => self.open_current(),
+            UiAction::Reveal => self.reveal_current(),
             UiAction::SetAdjustments(mut adjustments) => {
                 adjustments.clamp();
                 self.adjustments = adjustments;

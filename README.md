@@ -31,6 +31,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
   camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
   the file has them.
+- **Share actions** — `C` opens a share panel with Copy image, Copy path, Open,
+  and Show in folder. Copy image captures the current view, including EXIF
+  orientation and color fixes, so it can be pasted into chat or an editor.
 - **GPU color fixes** — `F` opens non-destructive brightness, contrast, gamma,
   and per-channel controls plus Auto, Lighten, Darken, Warm, and Cool presets.
   The shader applies them live without touching the file; Revert clears them.
@@ -106,6 +109,11 @@ $env:RUST_LOG = "info"
 | `[` / `]` | Shorten / lengthen the slideshow interval |
 | `I` | Show / hide the metadata panel |
 | `F` | Show / hide the color-fix panel |
+| `C` | Show / hide the share panel |
+| `Ctrl+C` | Copy the current view (including fixes) to the clipboard |
+| `Ctrl+Shift+C` | Copy the file path |
+| `Ctrl+E` | Show the file in Explorer |
+| `Ctrl+Enter` | Open the file in its default application |
 | `Delete` | Move the current photo to the Recycle Bin (asks first) |
 | `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
 | `Ctrl+Left` / `Ctrl+Right` | Rotate and save |

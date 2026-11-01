@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 
 [dependencies]
+arboard = "3"
 anyhow = "1"
 bytemuck = "1"
 egui = { version = "0.37", features = ["default_fonts"] }

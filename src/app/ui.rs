@@ -68,6 +68,7 @@ impl App {
             && saving.is_none()
             && !self.show_info
             && !self.show_fixes
+            && !self.show_share
         {
             return actions;
         }
@@ -215,6 +216,9 @@ impl App {
                                 }
                                 if small_button(ui, "Fix").clicked() {
                                     actions.push(UiAction::ToggleFixes);
+                                }
+                                if small_button(ui, "Share").clicked() {
+                                    actions.push(UiAction::ToggleShare);
                                 }
                                 if small_button(ui, "Info").clicked() {
                                     actions.push(UiAction::ToggleInfo);
@@ -617,6 +621,71 @@ impl App {
             }
         }
 
+        if self.show_share {
+            let file_name = current_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            egui::Area::new(egui::Id::unique("share-panel"))
+                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(18.0, -18.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(205))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(24)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.set_max_width(300.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Share").size(14.0).strong());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if small_button(ui, "Close").clicked() {
+                                            actions.push(UiAction::ToggleShare);
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(truncate(&file_name, 42))
+                                    .size(11.0)
+                                    .color(egui::Color32::from_gray(170)),
+                            );
+                            ui.add_space(8.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if small_button(ui, "Copy image").clicked() {
+                                    actions.push(UiAction::CopyImage);
+                                }
+                                if small_button(ui, "Copy path").clicked() {
+                                    actions.push(UiAction::CopyPath);
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if small_button(ui, "Open").clicked() {
+                                    actions.push(UiAction::OpenDefault);
+                                }
+                                if small_button(ui, "Show in folder").clicked() {
+                                    actions.push(UiAction::Reveal);
+                                }
+                            });
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "Copy image copies the current view, including fixes. \
+                                     Ctrl+C / Ctrl+Shift+C / Ctrl+E / Ctrl+Enter.",
+                                )
+                                .size(10.0)
+                                .color(egui::Color32::from_gray(145)),
+                            );
+                        });
+                });
+        }
+
         if self.show_info {
             egui::Area::new(egui::Id::unique("info-panel"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
@@ -828,7 +897,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   Del: recycle   |   R/L: rotate   |   Esc: close panel / stop / exit",
+                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   C: share   |   Del: recycle   |   Esc: close panel / stop / exit",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),
