@@ -28,6 +28,12 @@ const THUMB_CACHE_LIMIT: usize = 320;
 const HUD_IDLE: Duration = Duration::from_millis(1600);
 const PHOTO_FADE_SECONDS: f32 = 0.18;
 const HELP_DURATION: Duration = Duration::from_secs(7);
+const TOAST_DURATION: Duration = Duration::from_secs(6);
+
+struct Toast {
+    text: String,
+    until: Instant,
+}
 
 pub enum UserEvent {
     /// A loader result is waiting in the loader channel.
@@ -80,6 +86,7 @@ pub struct App {
     photo_fade: f32,
     photo_fade_start: Instant,
     show_help_until: Instant,
+    toast: Option<Toast>,
     last_click: Option<(Instant, PhysicalPosition<f64>)>,
     quit_requested: bool,
     startup_photo_ready: bool,
@@ -152,6 +159,7 @@ impl App {
             photo_fade: 1.0,
             photo_fade_start: now,
             show_help_until: now + HELP_DURATION,
+            toast: None,
             last_click: None,
             quit_requested: false,
             startup_photo_ready: false,
@@ -462,8 +470,19 @@ impl App {
             } => {
                 match kind {
                     crate::loader::JobKind::Full => {
+                        let name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        self.toast = Some(Toast {
+                            text: truncate(&format!("Could not open {name}: {message}"), 150),
+                            until: Instant::now() + TOAST_DURATION,
+                        });
                         self.failed_full.insert(path, message);
                         if index == self.nav.current() {
+                            // Keep the error card on screen rather than
+                            // presenting an empty backdrop.
                             self.camera.clear_image();
                         }
                     }
@@ -771,6 +790,11 @@ impl App {
             self.current_photo().is_none() && !self.failed_full.contains_key(&current_path);
         let error = self.failed_full.get(&current_path).cloned();
         let show_help = now < self.show_help_until;
+        let toast = self
+            .toast
+            .as_ref()
+            .filter(|toast| now < toast.until)
+            .map(|toast| toast.text.clone());
 
         let show_controls = self.hud_alpha > 0.01;
         let pointer_near_bottom = self
@@ -779,7 +803,7 @@ impl App {
             .unwrap_or(false);
         let show_filmstrip = show_controls && (pointer_near_bottom || self.filmstrip_hovered);
 
-        if !show_controls && !loading && error.is_none() && !show_help {
+        if !show_controls && !loading && error.is_none() && !show_help && toast.is_none() {
             return actions;
         }
 
@@ -1128,6 +1152,27 @@ impl App {
                 });
         }
 
+        if let Some(text) = toast {
+            egui::Area::new(egui::Id::unique("toast"))
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(200))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(190, 92, 92)))
+                        .corner_radius(egui::CornerRadius::same(12))
+                        .inner_margin(egui::Margin::symmetric(14, 8))
+                        .show(ui, |ui| {
+                            ui.set_max_width(520.0);
+                            ui.label(
+                                egui::RichText::new(text)
+                                    .size(12.0)
+                                    .color(egui::Color32::from_gray(225)),
+                            );
+                        });
+                });
+        }
+
         if show_help {
             let remaining = self.show_help_until.saturating_duration_since(now);
             let fade = (remaining.as_secs_f32() / 0.6).clamp(0.0, 1.0);
@@ -1350,6 +1395,14 @@ impl ApplicationHandler<UserEvent> for App {
             next_deadline = Some(match next_deadline {
                 Some(existing) => existing.min(help_deadline),
                 None => help_deadline,
+            });
+        }
+        if let Some(toast) = &self.toast
+            && now < toast.until
+        {
+            next_deadline = Some(match next_deadline {
+                Some(existing) => existing.min(toast.until),
+                None => toast.until,
             });
         }
 
