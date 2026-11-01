@@ -28,6 +28,14 @@ pub struct GpuPhoto {
     bind_group: wgpu::BindGroup,
 }
 
+impl Drop for GpuPhoto {
+    fn drop(&mut self) {
+        // Return the allocation immediately instead of waiting for the last
+        // in-flight submission that referenced it.
+        self._texture.destroy();
+    }
+}
+
 pub struct PhotoDraw<'a> {
     pub photo: &'a GpuPhoto,
     pub center: [f32; 2],

@@ -1,7 +1,7 @@
 //! Application state machine and winit event handling.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ use crate::viewer::navigation::Navigation;
 const FULL_PREFETCH_RADIUS: usize = 3;
 const PHOTO_CACHE_RADIUS: usize = 4;
 const THUMB_RADIUS: usize = 16;
+const THUMB_CACHE_LIMIT: usize = 320;
 const HUD_IDLE: Duration = Duration::from_millis(1600);
 const PHOTO_FADE_SECONDS: f32 = 0.18;
 const HELP_DURATION: Duration = Duration::from_secs(7);
@@ -490,29 +491,27 @@ impl App {
     }
 
     fn evict_photo_cache(&mut self) {
-        let keep: HashSet<PathBuf> = self
-            .nav
-            .indices_by_distance(PHOTO_CACHE_RADIUS)
-            .into_iter()
-            .filter_map(|index| self.nav.path(index).map(Path::to_path_buf))
+        let current = self.nav.current();
+        let entries: Vec<(PathBuf, usize)> = self
+            .photos
+            .keys()
+            .map(|path| (path.clone(), self.nav.index_of(path).unwrap_or(usize::MAX)))
             .collect();
-        self.photos.retain(|path, _| keep.contains(path));
+        let limit = PHOTO_CACHE_RADIUS * 2 + 1;
+        for path in eviction_targets(&entries, current, limit) {
+            self.photos.remove(&path);
+        }
     }
 
     fn evict_thumb_cache(&mut self) {
-        if self.thumbs.len() <= 320 {
-            return;
-        }
-
         let current = self.nav.current();
-        let mut entries: Vec<(PathBuf, usize)> = self
+        let entries: Vec<(PathBuf, usize)> = self
             .thumbs
             .keys()
             .map(|path| (path.clone(), self.nav.index_of(path).unwrap_or(usize::MAX)))
             .collect();
-        entries.sort_by_key(|(_, index)| index.abs_diff(current));
-
-        for (path, _) in entries.into_iter().skip(240) {
+        for path in eviction_targets(&entries, current, THUMB_CACHE_LIMIT) {
+            // Dropping the handle frees the egui texture.
             self.thumbs.remove(&path);
         }
     }
@@ -1405,6 +1404,23 @@ impl App {
     }
 }
 
+/// Return the cached paths to drop so at most `limit` entries remain, furthest
+/// from `current` first. Paths that are no longer in the folder sort last.
+fn eviction_targets(entries: &[(PathBuf, usize)], current: usize, limit: usize) -> Vec<PathBuf> {
+    if entries.len() <= limit {
+        return Vec::new();
+    }
+
+    let mut ranked: Vec<&(PathBuf, usize)> = entries.iter().collect();
+    ranked.sort_by_key(|(path, index)| (std::cmp::Reverse(index.abs_diff(current)), path.clone()));
+
+    ranked
+        .into_iter()
+        .take(entries.len() - limit)
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
 fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).size(12.0))
@@ -1421,5 +1437,34 @@ fn truncate(text: &str, max_chars: usize) -> String {
         let mut result: String = text.chars().take(max_chars.saturating_sub(1)).collect();
         result.push('…');
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eviction_targets;
+    use std::path::PathBuf;
+
+    fn entries(indices: &[usize]) -> Vec<(PathBuf, usize)> {
+        indices
+            .iter()
+            .map(|&index| (PathBuf::from(format!("photo{index}.jpg")), index))
+            .collect()
+    }
+
+    #[test]
+    fn eviction_drops_the_furthest_entries_first() {
+        let cached = entries(&[0, 1, 5, 9]);
+        assert_eq!(
+            eviction_targets(&cached, 0, 2),
+            [PathBuf::from("photo9.jpg"), PathBuf::from("photo5.jpg")]
+        );
+    }
+
+    #[test]
+    fn eviction_does_nothing_within_the_limit() {
+        let cached = entries(&[0, 1, 2]);
+        assert!(eviction_targets(&cached, 1, 3).is_empty());
+        assert!(eviction_targets(&cached, 1, 10).is_empty());
     }
 }
