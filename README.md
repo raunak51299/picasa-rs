@@ -26,13 +26,16 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **One window per session** — launching picasa-rs again focuses the existing
   viewer and opens the requested file or folder there instead of starting a
   second copy.
+- **Persistent preferences** — the slideshow interval, desktop scrim opacity,
+  and delete confirmation are read from `%APPDATA%\picasa-rs\config.toml`.
 - **Filmstrip and HUD** — a thumbnail strip and a compact control bar appear on
   mouse movement and fade away when idle.
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
   (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
   slideshow without closing the viewer.
-- **Recycle Bin delete** — `Delete` asks for confirmation and moves the current
-  photo to the Windows Recycle Bin, then advances to the next image.
+- **Recycle Bin delete** — `Delete` asks for confirmation (unless disabled in
+  preferences) and moves the current photo to the Windows Recycle Bin, then
+  advances to the next image.
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
   camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
   the file has them.
@@ -145,6 +148,27 @@ segment byte for byte, including the orientation tag. Other formats are
 re-encoded by the `image` crate with the orientation baked into the pixels,
 because their metadata is dropped. Saving color fixes for GIF files is not
 supported yet.
+
+## Preferences
+
+picasa-rs reads `%APPDATA%\picasa-rs\config.toml` at startup and creates it the
+first time you change the slideshow interval with `[` or `]`:
+
+```toml
+# picasa-rs preferences
+slideshow_interval_secs = 4   # 2-30
+scrim_opacity = 0.75          # 0.0 = clear, 1.0 = black
+confirm_delete = true
+```
+
+- `slideshow_interval_secs` is clamped to 2-30 seconds and is updated when you
+  change the interval from the keyboard or HUD.
+- `scrim_opacity` controls the black desktop backdrop for both the native
+  startup preview and the GPU renderer.
+- `confirm_delete = false` moves the current photo to the Recycle Bin as soon as
+  you press `Delete`, without the confirmation card.
+- Unknown keys and `[section]` headers are ignored. A malformed file is logged
+  and the defaults are used for that run.
 
 ## Transparency on Windows
 

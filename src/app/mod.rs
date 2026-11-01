@@ -4,7 +4,7 @@ mod animation;
 mod cache;
 mod events;
 mod input;
-mod slideshow;
+pub(crate) mod slideshow;
 mod ui;
 
 use std::collections::{HashMap, HashSet};
@@ -25,13 +25,14 @@ use crate::adjust::Adjustments;
 use crate::animation::Playback;
 use crate::info::{self, PhotoInfo};
 use crate::loader::{Loader, LoaderEvent};
+use crate::preferences::Preferences;
 use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
 use crate::save::SaveMode;
 use crate::viewer::camera::{Camera, Vec2};
 use crate::viewer::navigation::Navigation;
 
-use self::slideshow::{DEFAULT_INTERVAL, Slideshow};
+use self::slideshow::Slideshow;
 
 const FULL_PREFETCH_RADIUS: usize = 3;
 const PHOTO_CACHE_RADIUS: usize = 4;
@@ -155,6 +156,7 @@ pub struct App {
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
+    preferences: Preferences,
     /// True while a file is being dragged over the window.
     drag_hover: bool,
     modifiers: ModifiersState,
@@ -205,6 +207,7 @@ impl App {
         );
 
         let now = Instant::now();
+        let preferences = Preferences::load();
 
         Ok(Self {
             nav,
@@ -248,7 +251,8 @@ impl App {
             adjustments: Adjustments::default(),
             pending_save: None,
             slideshow: None,
-            slideshow_interval: DEFAULT_INTERVAL,
+            slideshow_interval: preferences.slideshow_interval,
+            preferences,
             drag_hover: false,
             modifiers: ModifiersState::empty(),
             last_click: None,
@@ -285,6 +289,7 @@ impl App {
                 preview_position.y,
                 size.width,
                 size.height,
+                self.preferences.scrim_alpha(),
             ) {
                 Ok(preview) => self.preview = Some(preview),
                 Err(error) => log::warn!("could not show the startup preview: {error:#}"),
@@ -319,8 +324,9 @@ impl App {
         window.set_title(&format!("{title_name} — picasa-rs"));
 
         log::info!("startup[{:.1}ms]: window created", crate::startup_ms());
-        let renderer =
+        let mut renderer =
             Renderer::new(window.clone()).context("could not initialize the wgpu renderer")?;
+        renderer.set_backdrop_alpha(self.preferences.scrim_opacity);
         log::info!("startup[{:.1}ms]: renderer ready", crate::startup_ms());
 
         let max_texture_side = renderer.max_texture_side();

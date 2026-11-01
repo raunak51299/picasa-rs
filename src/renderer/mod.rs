@@ -58,6 +58,7 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     format: wgpu::TextureFormat,
     transparent: bool,
+    backdrop_alpha: f64,
     gamma_target: bool,
     max_texture_side: u32,
     quad: QuadPipelines,
@@ -210,6 +211,7 @@ impl Renderer {
             config,
             format,
             transparent,
+            backdrop_alpha: DIM_BACKDROP_ALPHA,
             gamma_target: !format.is_srgb(),
             max_texture_side,
             quad,
@@ -220,6 +222,11 @@ impl Renderer {
 
     pub fn max_texture_side(&self) -> u32 {
         self.max_texture_side
+    }
+
+    /// Opacity of the desktop scrim behind the photo, from 0.0 to 1.0.
+    pub fn set_backdrop_alpha(&mut self, alpha: f32) {
+        self.backdrop_alpha = f64::from(alpha.clamp(0.0, 1.0));
     }
 
     fn ensure_egui(&mut self) {
@@ -478,7 +485,7 @@ impl Renderer {
                 r: 0.0,
                 g: 0.0,
                 b: 0.0,
-                a: DIM_BACKDROP_ALPHA,
+                a: self.backdrop_alpha,
             }
         } else {
             wgpu::Color {

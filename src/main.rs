@@ -11,6 +11,7 @@ mod app;
 mod delete;
 mod info;
 mod loader;
+mod preferences;
 mod preview;
 mod renderer;
 mod rotate;
@@ -147,6 +148,12 @@ CONTROLS:
 SUPPORTED FORMATS:
     JPEG, PNG, WebP, TIFF, BMP, GIF
     Animated GIF and WebP files play automatically.
+
+PREFERENCES:
+    %APPDATA%\\picasa-rs\\config.toml
+    slideshow_interval_secs = 4    (2-30)
+    scrim_opacity = 0.75           (0.0-1.0)
+    confirm_delete = true
 "
     );
 }

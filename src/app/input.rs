@@ -1,6 +1,6 @@
 //! Keyboard, mouse, and HUD action handling.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use winit::event_loop::ActiveEventLoop;
@@ -262,9 +262,14 @@ impl App {
     }
 
     fn adjust_slideshow(&mut self, step_seconds: i64) {
+        let previous = self.slideshow_interval;
         self.slideshow_interval = stepped_interval(self.slideshow_interval, step_seconds);
         if let Some(slideshow) = &mut self.slideshow {
             slideshow.set_interval(self.slideshow_interval, Instant::now());
+        }
+        if self.slideshow_interval != previous {
+            self.preferences.slideshow_interval = self.slideshow_interval;
+            self.preferences.save();
         }
         self.toast = Some(Toast {
             text: format!(
@@ -279,13 +284,21 @@ impl App {
         let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
             return;
         };
-        self.pending_delete = Some(path);
+        if self.preferences.confirm_delete {
+            self.pending_delete = Some(path);
+        } else {
+            self.delete_path(path);
+        }
     }
 
     fn confirm_delete(&mut self) {
         let Some(path) = self.pending_delete.take() else {
             return;
         };
+        self.delete_path(path);
+    }
+
+    fn delete_path(&mut self, path: PathBuf) {
         let name = path
             .file_name()
             .unwrap_or_default()

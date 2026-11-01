@@ -30,7 +30,6 @@ mod platform {
 
     use crate::loader::decoder;
 
-    const BACKDROP_ALPHA: u32 = 191; // 0.75 * 255, matching DIM_BACKDROP_ALPHA.
     const FIT_WIDTH: f32 = 0.88;
     const FIT_HEIGHT: f32 = 0.80;
 
@@ -46,15 +45,22 @@ mod platform {
         /// Create the preview and paint the dim backdrop immediately, then
         /// decode and paint the first image on a worker thread. Both steps
         /// happen while the GPU adapter is still being initialized.
-        pub fn show(path: &Path, x: i32, y: i32, width: u32, height: u32) -> Result<Self> {
+        pub fn show(
+            path: &Path,
+            x: i32,
+            y: i32,
+            width: u32,
+            height: u32,
+            backdrop_alpha: u8,
+        ) -> Result<Self> {
             let preview = Self::new(x, y, width.max(1), height.max(1))?;
-            preview.paint_backdrop()?;
+            preview.paint_backdrop(backdrop_alpha)?;
             preview.show_window();
             log::info!(
                 "startup[{:.1}ms]: preview backdrop shown",
                 crate::startup_ms()
             );
-            preview.paint_photo_in_background(path.to_path_buf());
+            preview.paint_photo_in_background(path.to_path_buf(), backdrop_alpha);
             Ok(preview)
         }
 
@@ -108,12 +114,12 @@ mod platform {
             }
         }
 
-        fn paint_backdrop(&self) -> Result<()> {
-            let pixels = backdrop_pixels(self.width, self.height);
+        fn paint_backdrop(&self, backdrop_alpha: u8) -> Result<()> {
+            let pixels = backdrop_pixels(self.width, self.height, backdrop_alpha);
             update_layered(self.hwnd, self.x, self.y, self.width, self.height, &pixels)
         }
 
-        fn paint_photo_in_background(&self, path: PathBuf) {
+        fn paint_photo_in_background(&self, path: PathBuf, backdrop_alpha: u8) {
             let hwnd = self.hwnd as isize;
             let (x, y, width, height) = (self.x, self.y, self.width, self.height);
             let spawned = std::thread::Builder::new()
@@ -128,7 +134,7 @@ mod platform {
                             return;
                         }
                     };
-                    let pixels = photo_pixels(photo, width, height);
+                    let pixels = photo_pixels(photo, width, height, backdrop_alpha);
                     // The window may already have been destroyed if the GPU
                     // won the race; UpdateLayeredWindow then fails harmlessly.
                     if let Err(error) = update_layered(hwnd as HWND, x, y, width, height, &pixels) {
@@ -156,19 +162,19 @@ mod platform {
         }
     }
 
-    fn backdrop_pixels(width: u32, height: u32) -> Vec<u8> {
+    fn backdrop_pixels(width: u32, height: u32, backdrop_alpha: u8) -> Vec<u8> {
         let mut pixels = vec![0u8; width as usize * height as usize * 4];
         for pixel in pixels.as_chunks_mut::<4>().0 {
-            *pixel = [0, 0, 0, BACKDROP_ALPHA as u8];
+            *pixel = [0, 0, 0, backdrop_alpha];
         }
         pixels
     }
 
-    fn photo_pixels(photo: RgbaImage, width: u32, height: u32) -> Vec<u8> {
+    fn photo_pixels(photo: RgbaImage, width: u32, height: u32, backdrop_alpha: u8) -> Vec<u8> {
         let photo_width = photo.width();
         let photo_height = photo.height();
 
-        let mut pixels = backdrop_pixels(width, height);
+        let mut pixels = backdrop_pixels(width, height, backdrop_alpha);
         let offset_x = (width - photo_width) / 2;
         let offset_y = (height - photo_height) / 2;
         let source = photo.as_raw();
@@ -190,7 +196,7 @@ mod platform {
                 let red = (source_pixel[0] as u32 * alpha + 127) / 255;
                 let green = (source_pixel[1] as u32 * alpha + 127) / 255;
                 let blue = (source_pixel[2] as u32 * alpha + 127) / 255;
-                let out_alpha = alpha + (BACKDROP_ALPHA * (255 - alpha) + 127) / 255;
+                let out_alpha = alpha + (backdrop_alpha as u32 * (255 - alpha) + 127) / 255;
                 *destination_pixel = [blue as u8, green as u8, red as u8, out_alpha as u8];
             }
         }
