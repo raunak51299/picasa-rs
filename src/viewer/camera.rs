@@ -317,3 +317,100 @@ impl Camera {
         ((self.target_angle / PI * 180.0).round() as i32).rem_euclid(360)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::FRAC_PI_2;
+
+    fn camera() -> Camera {
+        let mut camera = Camera::default();
+        camera.set_viewport(1200.0, 900.0);
+        camera.set_image(1000.0, 800.0);
+        camera
+    }
+
+    fn settle(camera: &mut Camera) {
+        for _ in 0..2000 {
+            if !camera.update(1.0 / 60.0) {
+                return;
+            }
+        }
+        panic!("camera did not settle");
+    }
+
+    #[test]
+    fn zoom_keeps_the_point_under_the_cursor_fixed() {
+        let mut camera = camera();
+        let cursor = Vec2::new(700.0, 500.0);
+        let before = camera.screen_to_image(cursor);
+
+        camera.set_target_scale_at(camera.target_scale * 2.0, cursor);
+        settle(&mut camera);
+
+        let after = camera.screen_to_image(cursor);
+        assert!((after.x - before.x).abs() < 0.01, "{after:?} != {before:?}");
+        assert!((after.y - before.y).abs() < 0.01, "{after:?} != {before:?}");
+    }
+
+    #[test]
+    fn damping_converges_without_overshoot() {
+        let mut camera = camera();
+        camera.set_target_scale_at(camera.target_scale * 2.0, Vec2::new(600.0, 450.0));
+
+        let mut previous = camera.scale;
+        for _ in 0..30 {
+            camera.update(1.0 / 60.0);
+            assert!(camera.scale >= previous - 1e-6);
+            assert!(camera.scale <= camera.target_scale + 1e-6);
+            previous = camera.scale;
+        }
+
+        settle(&mut camera);
+        assert!((camera.scale - camera.target_scale).abs() < 1e-5);
+        assert!(!camera.is_animating());
+    }
+
+    #[test]
+    fn smoothing_is_frame_rate_independent() {
+        let mut slow = camera();
+        let mut fast = camera();
+        for camera in [&mut slow, &mut fast] {
+            camera.set_target_scale_at(camera.target_scale * 2.0, Vec2::new(400.0, 300.0));
+            camera.rotate(FRAC_PI_2);
+        }
+
+        for _ in 0..60 {
+            slow.update(1.0 / 60.0);
+        }
+        for _ in 0..144 {
+            fast.update(1.0 / 144.0);
+        }
+
+        assert!((slow.scale - fast.scale).abs() < 1e-3);
+        assert!((slow.offset.x - fast.offset.x).abs() < 0.01);
+        assert!((slow.offset.y - fast.offset.y).abs() < 0.01);
+        assert!((slow.angle - fast.angle).abs() < 1e-3);
+    }
+
+    #[test]
+    fn rotation_refits_and_tracks_the_angle() {
+        let mut camera = camera();
+        let fit_scale = camera.target_scale;
+
+        camera.rotate(FRAC_PI_2);
+        assert!((camera.target_angle - FRAC_PI_2).abs() < 1e-6);
+        assert!(camera.target_scale < fit_scale);
+
+        settle(&mut camera);
+        assert_eq!(camera.rotation_degrees(), 90);
+        let extents = camera.rotated_extents(camera.angle, camera.scale);
+        assert!((extents.x - camera.image_size.y * camera.scale).abs() < 0.01);
+        assert!((extents.y - camera.image_size.x * camera.scale).abs() < 0.01);
+
+        camera.rotate(-FRAC_PI_2);
+        settle(&mut camera);
+        assert_eq!(camera.rotation_degrees(), 0);
+        assert!((camera.scale - fit_scale).abs() < 0.01);
+    }
+}
