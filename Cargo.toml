@@ -19,6 +19,11 @@ rayon = "1"
 wgpu = "30"
 winit = "0.30"
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
