@@ -3,7 +3,9 @@
 mod cache;
 mod events;
 mod input;
+mod slideshow;
 mod ui;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +25,8 @@ use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
 use crate::viewer::camera::{Camera, Vec2};
 use crate::viewer::navigation::Navigation;
+
+use self::slideshow::{DEFAULT_INTERVAL, Slideshow};
 
 const FULL_PREFETCH_RADIUS: usize = 3;
 const PHOTO_CACHE_RADIUS: usize = 4;
@@ -59,6 +63,9 @@ enum UiAction {
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
+    ToggleSlideshow,
+    SlideshowSlower,
+    SlideshowFaster,
     Close,
 }
 
@@ -100,6 +107,9 @@ pub struct App {
     show_help_until: Instant,
     toast: Option<Toast>,
     pending_rotation: Option<RotationRequest>,
+    slideshow: Option<Slideshow>,
+    /// Remembered between slideshow runs.
+    slideshow_interval: Duration,
     modifiers: ModifiersState,
     last_click: Option<(Instant, PhysicalPosition<f64>)>,
     quit_requested: bool,
@@ -177,6 +187,8 @@ impl App {
             show_help_until: now + HELP_DURATION,
             toast: None,
             pending_rotation: None,
+            slideshow: None,
+            slideshow_interval: DEFAULT_INTERVAL,
             modifiers: ModifiersState::empty(),
             last_click: None,
             quit_requested: false,
@@ -343,6 +355,9 @@ impl App {
 
         self.scroll_filmstrip = true;
         self.last_click = None;
+        if let Some(slideshow) = &mut self.slideshow {
+            slideshow.defer(Instant::now());
+        }
 
         let path = self.nav.current_path().to_path_buf();
         if let Some(photo) = self.photos.get(&path) {
@@ -690,6 +705,13 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let now = Instant::now();
+        if self.slideshow.as_ref().is_some_and(|show| show.is_due(now)) {
+            self.navigate_by(1);
+            if let Some(show) = &mut self.slideshow {
+                show.defer(Instant::now());
+            }
+        }
+
         if let Some(until) = self.preview_until
             && now >= until
         {
@@ -713,6 +735,13 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let mut next_deadline: Option<Instant> = self.preview_until;
+        if let Some(show) = &self.slideshow {
+            let deadline = show.next_advance();
+            next_deadline = Some(match next_deadline {
+                Some(existing) => existing.min(deadline),
+                None => deadline,
+            });
+        }
         if self.hud_alpha > 0.001 && hud_deadline > now {
             next_deadline = Some(match next_deadline {
                 Some(existing) => existing.min(hud_deadline),

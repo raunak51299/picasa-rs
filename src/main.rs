@@ -83,12 +83,15 @@ CONTROLS:
     Scroll wheel        zoom around the cursor
     Drag                pan
     Double click / 1    toggle fit and 1:1
-    0 / Space           reset view
+    0                   reset view
+    Space / S           start / pause slideshow
+    [ / ]               shorten / lengthen slideshow interval
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only
     H                   show help
-    Esc / Q             close
+    Esc                 stop slideshow, or close
+    Q                   close
 
 SUPPORTED FORMATS:
     JPEG, PNG, WebP, TIFF, BMP, GIF

@@ -120,6 +120,28 @@ impl App {
                                 }
                                 ui.separator();
 
+                                let playing = self.slideshow.is_some();
+                                if small_button(ui, if playing { "Pause" } else { "Play" })
+                                    .clicked()
+                                {
+                                    actions.push(UiAction::ToggleSlideshow);
+                                }
+                                if small_button(ui, "−s").clicked() {
+                                    actions.push(UiAction::SlideshowSlower);
+                                }
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{}s",
+                                        self.slideshow_interval.as_secs()
+                                    ))
+                                    .size(12.0)
+                                    .color(egui::Color32::from_gray(185)),
+                                );
+                                if small_button(ui, "+s").clicked() {
+                                    actions.push(UiAction::SlideshowFaster);
+                                }
+                                ui.separator();
+
                                 if small_button(ui, "−").clicked() {
                                     actions.push(UiAction::ZoomOut);
                                 }
@@ -475,7 +497,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   R/L: rotate + save   |   Shift+R/L: rotate view   |   Esc: close",
+                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   Space: slideshow   |   R/L: rotate + save   |   Esc: stop / close",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),

@@ -23,6 +23,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   filename sorting and neighbor prefetching for near-instant paging.
 - **Filmstrip and HUD** — a thumbnail strip and a compact control bar appear on
   mouse movement and fade away when idle.
+- **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
+  (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
+  slideshow without closing the viewer.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
 - **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
@@ -88,12 +91,15 @@ $env:RUST_LOG = "info"
 | Mouse wheel | Zoom around the cursor |
 | Drag | Pan |
 | Double-click / `1` | Toggle fit and 1:1 |
-| `0` / `Space` | Reset the view |
+| `0` | Reset the view |
+| `Space` / `S` | Start / pause the slideshow |
+| `[` / `]` | Shorten / lengthen the slideshow interval |
 | `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
 | `Ctrl+Left` / `Ctrl+Right` | Rotate and save |
 | `Shift+R` / `Shift+L` | Rotate the view only |
 | `H` | Show the help hint |
-| `Esc` / `Q` | Close |
+| `Esc` | Stop the slideshow, or close when it is not playing |
+| `Q` | Close |
 | Click outside the photo | Close |
 
 ## Transparency on Windows

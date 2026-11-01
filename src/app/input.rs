@@ -10,6 +10,7 @@ use crate::loader::JobKind;
 use crate::rotate;
 use crate::viewer::camera::Vec2;
 
+use super::slideshow::{Slideshow, stepped_interval};
 use super::{App, HELP_DURATION, RotationRequest, TOAST_DURATION, Toast, UiAction, truncate};
 
 impl App {
@@ -30,7 +31,19 @@ impl App {
         }
 
         match code {
-            KeyCode::Escape | KeyCode::KeyQ => {
+            KeyCode::Escape => {
+                if !repeat {
+                    if self.slideshow.take().is_some() {
+                        self.toast = Some(Toast {
+                            text: "Slideshow stopped".to_string(),
+                            until: Instant::now() + TOAST_DURATION,
+                        });
+                    } else {
+                        event_loop.exit();
+                    }
+                }
+            }
+            KeyCode::KeyQ => {
                 if !repeat {
                     event_loop.exit();
                 }
@@ -59,7 +72,12 @@ impl App {
                     self.on_current_changed();
                 }
             }
-            KeyCode::Space | KeyCode::Digit0 | KeyCode::Numpad0 => {
+            KeyCode::Space | KeyCode::KeyS => {
+                if !repeat {
+                    self.toggle_slideshow();
+                }
+            }
+            KeyCode::Digit0 | KeyCode::Numpad0 => {
                 if !repeat {
                     self.camera.reset_fit();
                 }
@@ -102,6 +120,16 @@ impl App {
                     self.request_window();
                 }
             }
+            KeyCode::BracketLeft => {
+                if !repeat {
+                    self.adjust_slideshow(-2);
+                }
+            }
+            KeyCode::BracketRight => {
+                if !repeat {
+                    self.adjust_slideshow(2);
+                }
+            }
             KeyCode::Equal | KeyCode::NumpadAdd => {
                 let anchor = self
                     .cursor_point()
@@ -121,6 +149,38 @@ impl App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+
+    fn toggle_slideshow(&mut self) {
+        if self.slideshow.take().is_some() {
+            self.toast = Some(Toast {
+                text: "Slideshow paused".to_string(),
+                until: Instant::now() + TOAST_DURATION,
+            });
+        } else {
+            self.slideshow = Some(Slideshow::new(self.slideshow_interval));
+            self.toast = Some(Toast {
+                text: format!(
+                    "Slideshow every {} s — Space pauses, Esc stops",
+                    self.slideshow_interval.as_secs()
+                ),
+                until: Instant::now() + TOAST_DURATION,
+            });
+        }
+    }
+
+    fn adjust_slideshow(&mut self, step_seconds: i64) {
+        self.slideshow_interval = stepped_interval(self.slideshow_interval, step_seconds);
+        if let Some(slideshow) = &mut self.slideshow {
+            slideshow.set_interval(self.slideshow_interval, Instant::now());
+        }
+        self.toast = Some(Toast {
+            text: format!(
+                "Slideshow interval: {} s",
+                self.slideshow_interval.as_secs()
+            ),
+            until: Instant::now() + TOAST_DURATION,
+        });
     }
 
     fn request_rotation(&mut self, clockwise: bool) {
@@ -197,6 +257,9 @@ impl App {
             UiAction::SetZoom(scale) => self
                 .camera
                 .set_target_scale_at(scale, self.viewport_center()),
+            UiAction::ToggleSlideshow => self.toggle_slideshow(),
+            UiAction::SlideshowSlower => self.adjust_slideshow(-2),
+            UiAction::SlideshowFaster => self.adjust_slideshow(2),
             UiAction::Close => self.quit_requested = true,
         }
 
