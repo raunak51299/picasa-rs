@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 use winit::window::CursorIcon;
@@ -673,12 +674,21 @@ impl App {
 }
 
 impl App {
-    pub(super) fn handle_primary_press(&mut self, event_loop: &ActiveEventLoop) {
+    pub(super) fn handle_primary_press(&mut self, _event_loop: &ActiveEventLoop) {
         let Some(position) = self.cursor else {
             return;
         };
         let point = Vec2::new(position.x as f32, position.y as f32);
         let now = Instant::now();
+
+        if self.camera.has_image() && !self.camera.contains_screen_point(point) {
+            // In fullscreen, clicking the transparent area drops into a
+            // borderless window sized around the photo. Once windowed, the
+            // same click is intentionally inert.
+            self.last_click = None;
+            self.switch_to_windowed();
+            return;
+        }
 
         let double_click = self.last_click.is_some_and(|(last_time, last_position)| {
             now.duration_since(last_time) < Duration::from_millis(380)
@@ -699,11 +709,6 @@ impl App {
             return;
         }
 
-        if self.camera.has_image() && !self.camera.contains_screen_point(point) {
-            event_loop.exit();
-            return;
-        }
-
         if self.camera.has_image() {
             self.dragging = true;
             self.drag_last = Some(position);
@@ -712,5 +717,59 @@ impl App {
             }
             self.record_activity();
         }
+    }
+
+    /// Leave fullscreen and size a borderless, resizable window around the
+    /// photo at its current on-screen size.
+    fn switch_to_windowed(&mut self) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        if window.fullscreen().is_none() {
+            return;
+        }
+
+        let monitor = window
+            .current_monitor()
+            .or_else(|| window.primary_monitor());
+        let half_size = self.camera.screen_half_size();
+        let mut width = (half_size.x * 2.0).max(1.0);
+        let mut height = (half_size.y * 2.0).max(1.0);
+
+        // Never make a window so small that the HUD and filmstrip have no room.
+        const MIN_WIDTH: f32 = 480.0;
+        const MIN_HEIGHT: f32 = 360.0;
+        let minimum_scale = (MIN_WIDTH / width).max(MIN_HEIGHT / height).max(1.0);
+        width *= minimum_scale;
+        height *= minimum_scale;
+
+        // Leave a little room for the window frame and the taskbar.
+        if let Some(monitor) = &monitor {
+            let size = monitor.size();
+            let max_width = (size.width as f32 * 0.96).max(1.0);
+            let max_height = (size.height as f32 * 0.96).max(1.0);
+            let fit = (max_width / width).min(max_height / height).min(1.0);
+            width *= fit;
+            height *= fit;
+        }
+
+        let width = width.round().max(1.0) as u32;
+        let height = height.round().max(1.0) as u32;
+
+        window.set_fullscreen(None);
+        window.set_decorations(false);
+        window.set_resizable(true);
+        let _ = window.request_inner_size(PhysicalSize::new(width, height));
+
+        if let Some(monitor) = monitor {
+            let monitor_size = monitor.size();
+            let monitor_position = monitor.position();
+            let x = monitor_position.x + (monitor_size.width as i32 - width as i32) / 2;
+            let y = monitor_position.y + (monitor_size.height as i32 - height as i32) / 2;
+            window.set_outer_position(PhysicalPosition::new(x, y));
+        }
+
+        self.record_activity();
+        window.request_redraw();
     }
 }
