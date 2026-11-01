@@ -263,6 +263,9 @@ impl App {
                                 .scroll_bar_visibility(
                                     egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                                 )
+                                .scroll_source(egui::scroll_area::ScrollSource::ALL)
+                                .on_hover_cursor(egui::CursorIcon::Grab)
+                                .on_drag_cursor(egui::CursorIcon::Grabbing)
                                 .max_height(76.0)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
