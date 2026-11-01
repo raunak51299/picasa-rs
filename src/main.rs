@@ -7,6 +7,7 @@
 
 mod app;
 mod delete;
+mod info;
 mod loader;
 mod preview;
 mod renderer;
@@ -88,6 +89,7 @@ CONTROLS:
     Space / S           start / pause slideshow
     [ / ]               shorten / lengthen slideshow interval
     Delete              move the current photo to the Recycle Bin
+    I                   show or hide photo metadata
     R / L               rotate clockwise / counter-clockwise and save
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only

@@ -55,6 +55,7 @@ impl App {
             && toast.is_none()
             && rotation.is_none()
             && deletion.is_none()
+            && !self.show_info
         {
             return actions;
         }
@@ -192,6 +193,9 @@ impl App {
                                 }
                                 if small_button(ui, "Rot +").clicked() {
                                     actions.push(UiAction::RotatePersist(true));
+                                }
+                                if small_button(ui, "Info").clicked() {
+                                    actions.push(UiAction::ToggleInfo);
                                 }
                                 if small_button(ui, "Delete").clicked() {
                                     actions.push(UiAction::Delete);
@@ -469,6 +473,96 @@ impl App {
                 });
         }
 
+        if self.show_info {
+            egui::Area::new(egui::Id::unique("info-panel"))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::NONE
+                        .fill(egui::Color32::from_black_alpha(205))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(24)))
+                        .corner_radius(egui::CornerRadius::same(16))
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.set_max_width(340.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Photo info").size(14.0).strong());
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if small_button(ui, "Close").clicked() {
+                                            actions.push(UiAction::ToggleInfo);
+                                        }
+                                    },
+                                );
+                            });
+                            ui.add_space(6.0);
+
+                            if let Some(info) = &self.photo_info {
+                                egui::Grid::new("photo-info-grid")
+                                    .num_columns(2)
+                                    .spacing([12.0, 5.0])
+                                    .show(ui, |ui| {
+                                        let mut row = |label: &str, value: &str| {
+                                            ui.label(
+                                                egui::RichText::new(label)
+                                                    .size(10.0)
+                                                    .color(egui::Color32::from_gray(135)),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(value)
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_gray(225)),
+                                                )
+                                                .wrap(),
+                                            );
+                                            ui.end_row();
+                                        };
+
+                                        row("File", &info.file_name);
+                                        if let Some((width, height)) = info.dimensions {
+                                            row("Dimensions", &format!("{width} × {height}"));
+                                        }
+                                        if let Some(size) = info.file_size {
+                                            row("Size", &crate::info::format_file_size(size));
+                                        }
+                                        if let Some(date) = &info.date {
+                                            row("Date", date);
+                                        }
+                                        if let Some(camera) = &info.camera {
+                                            row("Camera", camera);
+                                        }
+                                        if let Some(lens) = &info.lens {
+                                            row("Lens", lens);
+                                        }
+                                        if let Some(exposure) = &info.exposure {
+                                            row("Exposure", exposure);
+                                        }
+                                        if let Some(aperture) = &info.aperture {
+                                            row("Aperture", aperture);
+                                        }
+                                        if let Some(iso) = info.iso {
+                                            row("ISO", &iso.to_string());
+                                        }
+                                        if let Some(focal) = &info.focal_length {
+                                            row("Focal length", focal);
+                                        }
+                                        if let Some(gps) = &info.gps {
+                                            row("GPS", gps);
+                                        }
+                                    });
+                            } else {
+                                ui.label(
+                                    egui::RichText::new("Reading metadata…")
+                                        .size(11.0)
+                                        .color(egui::Color32::from_gray(160)),
+                                );
+                            }
+                        });
+                });
+        }
+
         if let Some(file_name) = deletion {
             egui::Area::new(egui::Id::unique("delete-confirm"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -550,7 +644,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Drag: pan   |   Left/Right: browse   |   Space: slideshow   |   Del: recycle   |   R/L: rotate + save   |   Esc: stop / close",
+                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   I: info   |   Del: recycle   |   R/L: rotate + save   |   Esc: stop / close",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),

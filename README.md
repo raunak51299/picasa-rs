@@ -28,6 +28,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   slideshow without closing the viewer.
 - **Recycle Bin delete** — `Delete` asks for confirmation and moves the current
   photo to the Windows Recycle Bin, then advances to the next image.
+- **Info panel** — `I` shows the file name, dimensions, size, capture date,
+  camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
+  the file has them.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
 - **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
@@ -96,6 +99,7 @@ $env:RUST_LOG = "info"
 | `0` | Reset the view |
 | `Space` / `S` | Start / pause the slideshow |
 | `[` / `]` | Shorten / lengthen the slideshow interval |
+| `I` | Show / hide the metadata panel |
 | `Delete` | Move the current photo to the Recycle Bin (asks first) |
 | `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
 | `Ctrl+Left` / `Ctrl+Right` | Rotate and save |

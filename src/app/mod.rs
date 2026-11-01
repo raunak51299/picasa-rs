@@ -20,6 +20,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
+use crate::info::{self, PhotoInfo};
 use crate::loader::{Loader, LoaderEvent};
 use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
@@ -63,6 +64,7 @@ enum UiAction {
     Delete,
     ConfirmDelete,
     CancelDelete,
+    ToggleInfo,
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
@@ -111,6 +113,8 @@ pub struct App {
     toast: Option<Toast>,
     pending_rotation: Option<RotationRequest>,
     pending_delete: Option<PathBuf>,
+    show_info: bool,
+    photo_info: Option<PhotoInfo>,
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
@@ -195,6 +199,8 @@ impl App {
             toast: None,
             pending_rotation: None,
             pending_delete: None,
+            show_info: false,
+            photo_info: None,
             slideshow: None,
             slideshow_interval: DEFAULT_INTERVAL,
             modifiers: ModifiersState::empty(),
@@ -373,6 +379,10 @@ impl App {
             self.camera.clear_image();
             return;
         };
+        if self.show_info {
+            self.photo_info = Some(info::read(&path));
+        }
+
         if let Some(photo) = self.photos.get(&path) {
             self.camera
                 .set_image(photo.display_width as f32, photo.display_height as f32);

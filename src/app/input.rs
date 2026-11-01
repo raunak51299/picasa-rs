@@ -49,7 +49,9 @@ impl App {
         match code {
             KeyCode::Escape => {
                 if !repeat {
-                    if self.slideshow.take().is_some() {
+                    if self.show_info {
+                        self.show_info = false;
+                    } else if self.slideshow.take().is_some() {
                         self.toast = Some(Toast {
                             text: "Slideshow stopped".to_string(),
                             until: Instant::now() + TOAST_DURATION,
@@ -127,6 +129,14 @@ impl App {
             KeyCode::Delete => {
                 if !repeat {
                     self.request_delete();
+                }
+            }
+            KeyCode::KeyI => {
+                if !repeat {
+                    self.show_info = !self.show_info;
+                    if self.show_info {
+                        self.photo_info = self.nav.current_path().map(crate::info::read);
+                    }
                 }
             }
             KeyCode::KeyH => {
@@ -330,6 +340,12 @@ impl App {
             UiAction::Delete => self.request_delete(),
             UiAction::ConfirmDelete => self.confirm_delete(),
             UiAction::CancelDelete => self.pending_delete = None,
+            UiAction::ToggleInfo => {
+                self.show_info = !self.show_info;
+                if self.show_info {
+                    self.photo_info = self.nav.current_path().map(crate::info::read);
+                }
+            }
             UiAction::ZoomIn => self.camera.zoom_at(self.viewport_center(), 1.25),
             UiAction::ZoomOut => self.camera.zoom_at(self.viewport_center(), 0.8),
             UiAction::SetZoom(scale) => self
