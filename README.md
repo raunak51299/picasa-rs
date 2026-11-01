@@ -23,6 +23,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   filename sorting and neighbor prefetching for near-instant paging.
 - **Drag and drop** — drop a photo to open it, or a folder to open its first
   supported image and rebuild the listing around that folder.
+- **One window per session** — launching picasa-rs again focuses the existing
+  viewer and opens the requested file or folder there instead of starting a
+  second copy.
 - **Filmstrip and HUD** — a thumbnail strip and a compact control bar appear on
   mouse movement and fade away when idle.
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval

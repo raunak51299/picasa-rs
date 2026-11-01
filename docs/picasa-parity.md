@@ -37,7 +37,7 @@ adds.
 | Animated GIF | Played GIF frames with their delays. | Frame-delay playback for GIF and animated WebP, looping while the photo is on screen, restarting after navigation, and capped at 600 frames or 256 MiB. |
 | Drag and drop | Dropping a file or folder opened it. | Accept dropped files and folders and rebuild the folder listing. Done: a dropped photo opens in its folder; a dropped folder opens its first supported image. |
 | Open with / associations | Installed as an "Open with" handler. | Done: `packaging/windows/install.ps1` registers a per-user ProgID, `OpenWithProgids`, a Default Programs `Capabilities` entry, and "Open with picasa-rs" verbs for image files and folders. The CLI path argument remains the entry point. |
-| Single instance | A second launch reused the running viewer. | Forward the new path to the existing process and reuse its window. |
+| Single instance | A second launch reused the running viewer. | Done: a session-scoped named mutex plus named pipe forwards the requested file or folder to the existing window, which also comes to the foreground. A launch without a path only focuses the window. |
 | Preferences | Remembered slideshow and viewer settings. | `%APPDATA%\picasa-rs\config.toml` for slideshow interval, scrim opacity, and delete confirmation. |
 | Optional formats | Picasa read a wide range of camera formats. | Optional AVIF/HEIC/RAW features only where a dependency can be verified; otherwise document the gap. |
 

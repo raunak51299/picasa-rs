@@ -60,6 +60,10 @@ struct SaveRequest {
 pub enum UserEvent {
     /// A loader result is waiting in the loader channel.
     LoaderReady,
+    /// Another launch asked this viewer to come to the foreground.
+    Focus,
+    /// Another launch asked this viewer to open a file or directory.
+    OpenPath(PathBuf),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -506,6 +510,22 @@ impl App {
         self.last_activity = Instant::now();
     }
 
+    fn show_toast(&mut self, text: impl AsRef<str>) {
+        self.toast = Some(Toast {
+            text: truncate(text.as_ref(), 150),
+            until: Instant::now() + TOAST_DURATION,
+        });
+    }
+
+    fn focus_window(&self) {
+        if let Some(window) = &self.window {
+            window.set_minimized(false);
+            window.set_visible(true);
+            window.focus_window();
+            window.request_redraw();
+        }
+    }
+
     fn hud_target(&self) -> f32 {
         if self.ui_hovered || self.dragging || self.last_activity.elapsed() < HUD_IDLE {
             1.0
@@ -809,10 +829,7 @@ impl ApplicationHandler<UserEvent> for App {
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
-                    self.toast = Some(Toast {
-                        text: truncate(&format!("Could not open {name}: {message}"), 150),
-                        until: Instant::now() + TOAST_DURATION,
-                    });
+                    self.show_toast(format!("Could not open {name}: {message}"));
                 }
                 if let Some(window) = &self.window {
                     window.request_redraw();
@@ -836,6 +853,23 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::LoaderReady => self.drain_loader_events(),
+            UserEvent::Focus => self.focus_window(),
+            UserEvent::OpenPath(path) => {
+                if let Err(error) = self.open_path(&path) {
+                    let message = format!("{error:#}");
+                    log::warn!(
+                        "could not open forwarded path {}: {message}",
+                        path.display()
+                    );
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    self.show_toast(format!("Could not open {name}: {message}"));
+                }
+                self.focus_window();
+            }
         }
     }
 

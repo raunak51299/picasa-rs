@@ -16,6 +16,8 @@ mod renderer;
 mod rotate;
 mod save;
 mod share;
+#[cfg(windows)]
+mod single_instance;
 mod viewer;
 
 use std::path::{Path, PathBuf};
@@ -53,6 +55,34 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(windows)]
+    let instance = single_instance::SingleInstance::acquire()
+        .context("could not check for a running picasa-rs instance")?;
+    #[cfg(windows)]
+    if instance.is_none() {
+        let request = match args.iter().find(|arg| !arg.starts_with('-')) {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                let path = std::path::absolute(&path)
+                    .with_context(|| format!("invalid path: {}", path.display()))?;
+                single_instance::Request::Open(path)
+            }
+            None => single_instance::Request::Focus,
+        };
+        match single_instance::forward(&request) {
+            Ok(()) => {
+                log::info!(
+                    "startup[{:.1}ms]: handed the request to the running viewer",
+                    startup_ms()
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                log::warn!("another viewer is running but did not accept the request: {error:#}");
+            }
+        }
+    }
+
     let initial_path = resolve_initial_image(&args)?;
 
     let event_loop = EventLoop::<UserEvent>::with_user_event()
@@ -62,6 +92,10 @@ fn main() -> Result<()> {
     log::info!("startup[{:.1}ms]: event loop created", startup_ms());
 
     let proxy = event_loop.create_proxy();
+    #[cfg(windows)]
+    if let Err(error) = single_instance::start_server(proxy.clone()) {
+        log::warn!("single-instance listener unavailable: {error:#}");
+    }
     let mut app = app::App::new(initial_path, proxy)?;
     log::info!("startup[{:.1}ms]: app state ready", startup_ms());
 
@@ -82,6 +116,7 @@ USAGE:
     picasa-rs <DIRECTORY>
 
 If no path is supplied the first supported image in the current directory is used.
+Launching picasa-rs while it is already running reuses that window.
 
 CONTROLS:
     Left / Right        previous / next image
