@@ -3,14 +3,16 @@
 
 pub mod decoder;
 
+use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
     AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering as AtomicOrdering,
 };
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use winit::event_loop::EventLoopProxy;
@@ -80,6 +82,39 @@ impl Ord for Job {
     }
 }
 
+/// Lock a mutex even if a previous holder panicked. A poisoned queue or
+/// in-flight set is still structurally valid, and refusing to use it would
+/// stop every later image from loading.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A job is stale when the viewer has moved further than the kind's radius.
+fn is_stale(index: usize, current: usize, kind: JobKind) -> bool {
+    let radius = match kind {
+        JobKind::Full => STALE_FULL_RADIUS,
+        JobKind::Thumb => STALE_THUMB_RADIUS,
+    };
+    index.abs_diff(current) > radius
+}
+
+/// Claim a job for decoding, returning false when it is already in flight.
+fn claim_job(in_flight: &Mutex<HashSet<(PathBuf, JobKind)>>, path: &Path, kind: JobKind) -> bool {
+    lock(in_flight).insert((path.to_path_buf(), kind))
+}
+
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "image decoder panicked".to_string()
+    }
+}
+
 struct JobQueue {
     heap: Mutex<BinaryHeap<Job>>,
     available: Condvar,
@@ -99,12 +134,12 @@ impl JobQueue {
         if self.shutdown.load(AtomicOrdering::SeqCst) {
             return;
         }
-        self.heap.lock().unwrap().push(job);
+        lock(&self.heap).push(job);
         self.available.notify_one();
     }
 
     fn pop(&self) -> Option<Job> {
-        let mut heap = self.heap.lock().unwrap();
+        let mut heap = lock(&self.heap);
         loop {
             if self.shutdown.load(AtomicOrdering::SeqCst) {
                 return None;
@@ -112,7 +147,10 @@ impl JobQueue {
             if let Some(job) = heap.pop() {
                 return Some(job);
             }
-            heap = self.available.wait(heap).unwrap();
+            heap = self
+                .available
+                .wait(heap)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
     }
 
@@ -209,12 +247,8 @@ impl Loader {
     }
 
     fn request(&self, path: &Path, index: usize, kind: JobKind, priority: u8) {
-        let key = (path.to_path_buf(), kind);
-        {
-            let mut in_flight = self.shared.in_flight.lock().unwrap();
-            if !in_flight.insert(key) {
-                return;
-            }
+        if !claim_job(&self.shared.in_flight, path, kind) {
+            return;
         }
 
         let sequence = self.shared.sequence.fetch_add(1, AtomicOrdering::Relaxed);
@@ -240,59 +274,132 @@ impl Drop for Loader {
 fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, sender: Sender<LoaderEvent>) {
     while let Some(job) = shared.queue.pop() {
         let current = shared.current_index.load(AtomicOrdering::Relaxed);
-        let stale_radius = match job.kind {
-            JobKind::Full => STALE_FULL_RADIUS,
-            JobKind::Thumb => STALE_THUMB_RADIUS,
-        };
-
-        if job.index.abs_diff(current) > stale_radius {
-            shared
-                .in_flight
-                .lock()
-                .unwrap()
-                .remove(&(job.path.clone(), job.kind));
-            let _ = sender.send(LoaderEvent::Stale {
-                path: job.path,
+        let event = if is_stale(job.index, current, job.kind) {
+            LoaderEvent::Stale {
+                path: job.path.clone(),
                 index: job.index,
                 kind: job.kind,
-            });
-            let _ = proxy.send_event(UserEvent::LoaderReady);
-            continue;
-        }
-
-        let result = match job.kind {
-            JobKind::Full => {
-                let max_texture_dim = shared.max_texture_dim.load(AtomicOrdering::Relaxed);
-                decoder::decode_full(&job.path, job.index, max_texture_dim).map(LoaderEvent::Full)
             }
-            JobKind::Thumb => {
-                decoder::decode_thumbnail(&job.path, job.index).map(LoaderEvent::Thumb)
-            }
-        };
-
-        let event = match result {
-            Ok(event) => event,
-            Err(error) => {
-                log::warn!(
-                    "failed to load {} ({:?}): {error:#}",
-                    job.path.display(),
-                    job.kind
-                );
-                LoaderEvent::Error {
-                    path: job.path.clone(),
-                    index: job.index,
-                    kind: job.kind,
-                    message: format!("{error:#}"),
-                }
-            }
+        } else {
+            decode_job(&shared, &job)
         };
 
         let _ = sender.send(event);
         let _ = proxy.send_event(UserEvent::LoaderReady);
-        shared
-            .in_flight
-            .lock()
-            .unwrap()
-            .remove(&(job.path, job.kind));
+        lock(&shared.in_flight).remove(&(job.path, job.kind));
+    }
+}
+
+fn decode_job(shared: &Shared, job: &Job) -> LoaderEvent {
+    let result = catch_unwind(AssertUnwindSafe(|| match job.kind {
+        JobKind::Full => {
+            let max_texture_dim = shared.max_texture_dim.load(AtomicOrdering::Relaxed);
+            decoder::decode_full(&job.path, job.index, max_texture_dim).map(LoaderEvent::Full)
+        }
+        JobKind::Thumb => decoder::decode_thumbnail(&job.path, job.index).map(LoaderEvent::Thumb),
+    }));
+
+    let message = match result {
+        Ok(Ok(event)) => return event,
+        Ok(Err(error)) => format!("{error:#}"),
+        Err(payload) => panic_message(payload),
+    };
+
+    log::warn!(
+        "failed to load {} ({:?}): {message}",
+        job.path.display(),
+        job.kind
+    );
+    LoaderEvent::Error {
+        path: job.path.clone(),
+        index: job.index,
+        kind: job.kind,
+        message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(path: &str, kind: JobKind, priority: u8, sequence: u64) -> Job {
+        Job {
+            path: PathBuf::from(path),
+            index: 0,
+            kind,
+            priority,
+            sequence,
+        }
+    }
+
+    #[test]
+    fn jobs_are_ordered_by_priority_then_age() {
+        let mut heap = BinaryHeap::new();
+        heap.push(job("low-old", JobKind::Full, 0, 1));
+        heap.push(job("high-new", JobKind::Full, 10, 5));
+        heap.push(job("high-old", JobKind::Full, 10, 2));
+        heap.push(job("low-new", JobKind::Full, 0, 9));
+
+        let order: Vec<String> = std::iter::from_fn(|| heap.pop())
+            .map(|job| job.path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(order, ["high-old", "high-new", "low-old", "low-new"]);
+    }
+
+    #[test]
+    fn queue_pops_jobs_and_stops_after_shutdown() {
+        let queue = JobQueue::new();
+        queue.push(job("low", JobKind::Full, 1, 0));
+        queue.push(job("high", JobKind::Thumb, 5, 1));
+
+        assert_eq!(queue.pop().unwrap().path, PathBuf::from("high"));
+        assert_eq!(queue.pop().unwrap().path, PathBuf::from("low"));
+
+        queue.shutdown();
+        assert!(queue.pop().is_none());
+
+        queue.push(job("ignored", JobKind::Full, 0, 0));
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn queue_recovers_from_a_poisoned_mutex() {
+        let queue = JobQueue::new();
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = queue.heap.lock().unwrap();
+            panic!("poison the queue");
+        }));
+
+        queue.push(job("after-panic", JobKind::Full, 0, 0));
+        assert_eq!(queue.pop().unwrap().path, PathBuf::from("after-panic"));
+    }
+
+    #[test]
+    fn in_flight_jobs_are_claimed_once() {
+        let in_flight = Mutex::new(HashSet::new());
+        let path = Path::new("photo.jpg");
+
+        assert!(claim_job(&in_flight, path, JobKind::Full));
+        assert!(!claim_job(&in_flight, path, JobKind::Full));
+        assert!(claim_job(&in_flight, path, JobKind::Thumb));
+
+        lock(&in_flight).remove(&(path.to_path_buf(), JobKind::Full));
+        assert!(claim_job(&in_flight, path, JobKind::Full));
+    }
+
+    #[test]
+    fn stale_radius_depends_on_job_kind() {
+        assert!(!is_stale(5, 0, JobKind::Full));
+        assert!(is_stale(6, 0, JobKind::Full));
+        assert!(!is_stale(0, 5, JobKind::Full));
+        assert!(!is_stale(48, 0, JobKind::Thumb));
+        assert!(is_stale(49, 0, JobKind::Thumb));
+    }
+
+    #[test]
+    fn panic_payloads_become_messages() {
+        assert_eq!(panic_message(Box::new("boom")), "boom");
+        assert_eq!(panic_message(Box::new(String::from("boom"))), "boom");
+        assert_eq!(panic_message(Box::new(7_u8)), "image decoder panicked");
     }
 }
