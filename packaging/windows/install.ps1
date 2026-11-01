@@ -88,13 +88,19 @@ if (Test-Path -LiteralPath $iconSource -PathType Leaf) {
 
 $classes = 'HKCU:\Software\Classes'
 $progKey = Join-Path $classes $progId
+$openCommand = "`"$targetExe`" `"%1`""
 
 New-Item -Path $progKey -Force | Out-Null
 Set-Item -Path $progKey -Value $friendlyName
+New-ItemProperty -Path $progKey -Name 'FriendlyTypeName' -Value $friendlyName `
+    -PropertyType String -Force | Out-Null
 New-Item -Path (Join-Path $progKey 'DefaultIcon') -Force | Out-Null
 Set-Item -Path (Join-Path $progKey 'DefaultIcon') -Value "`"$iconPath`",0"
+New-Item -Path (Join-Path $progKey 'shell\open') -Force | Out-Null
+Set-ItemProperty -Path (Join-Path $progKey 'shell\open') -Name 'MUIVerb' `
+    -Value 'Open with picasa-rs' -Type String -Force
 New-Item -Path (Join-Path $progKey 'shell\open\command') -Force | Out-Null
-Set-Item -Path (Join-Path $progKey 'shell\open\command') -Value "`"$targetExe`" `"%1`""
+Set-Item -Path (Join-Path $progKey 'shell\open\command') -Value $openCommand
 
 foreach ($extension in $Extensions) {
     if (-not $extension.StartsWith('.')) {
@@ -111,9 +117,18 @@ foreach ($extension in $Extensions) {
 }
 
 $applicationKey = Join-Path $classes "Applications\$appExe"
+New-Item -Path $applicationKey -Force | Out-Null
+New-ItemProperty -Path $applicationKey -Name 'FriendlyAppName' -Value 'picasa-rs' `
+    -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $applicationKey -Name 'ApplicationName' -Value 'picasa-rs' `
+    -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $applicationKey -Name 'ApplicationIcon' -Value "`"$iconPath`",0" `
+    -PropertyType String -Force | Out-Null
+New-Item -Path (Join-Path $applicationKey 'shell\open') -Force | Out-Null
+Set-ItemProperty -Path (Join-Path $applicationKey 'shell\open') -Name 'MUIVerb' `
+    -Value 'Open with picasa-rs' -Type String -Force
 New-Item -Path (Join-Path $applicationKey 'shell\open\command') -Force | Out-Null
-Set-Item -Path (Join-Path $applicationKey 'shell\open\command') `
-    -Value "`"$targetExe`" `"%1`""
+Set-Item -Path (Join-Path $applicationKey 'shell\open\command') -Value $openCommand
 New-Item -Path (Join-Path $applicationKey 'SupportedTypes') -Force | Out-Null
 foreach ($extension in $Extensions) {
     if (-not $extension.StartsWith('.')) {
@@ -122,6 +137,56 @@ foreach ($extension in $Extensions) {
     New-ItemProperty -Path (Join-Path $applicationKey 'SupportedTypes') `
         -Name $extension.ToLowerInvariant() -Value '' -PropertyType String -Force | Out-Null
 }
+
+# Register with Default Programs so picasa-rs appears in Windows' "Open with"
+# and "Default apps" pickers even for extensions whose default is another app.
+$capabilitiesKey = 'HKCU:\Software\picasa-rs\Capabilities'
+New-Item -Path $capabilitiesKey -Force | Out-Null
+New-ItemProperty -Path $capabilitiesKey -Name 'ApplicationName' -Value 'picasa-rs' `
+    -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $capabilitiesKey -Name 'ApplicationDescription' `
+    -Value 'A fast, transparent photo viewer with zoom, slideshow, and fixes.' `
+    -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $capabilitiesKey -Name 'ApplicationIcon' `
+    -Value "`"$iconPath`",0" -PropertyType String -Force | Out-Null
+$fileAssociationsKey = Join-Path $capabilitiesKey 'FileAssociations'
+New-Item -Path $fileAssociationsKey -Force | Out-Null
+foreach ($extension in $Extensions) {
+    if (-not $extension.StartsWith('.')) {
+        $extension = ".$extension"
+    }
+    New-ItemProperty -Path $fileAssociationsKey -Name $extension.ToLowerInvariant() `
+        -Value $progId -PropertyType String -Force | Out-Null
+}
+New-Item -Path 'HKCU:\Software\RegisteredApplications' -Force | Out-Null
+New-ItemProperty -Path 'HKCU:\Software\RegisteredApplications' -Name 'picasa-rs' `
+    -Value 'Software\picasa-rs\Capabilities' -PropertyType String -Force | Out-Null
+
+# Add a direct "Open with picasa-rs" verb to image files and folders. These
+# verbs do not change the default handler; they only add a context-menu entry.
+function Add-ShellVerb {
+    param(
+        [string]$Key,
+        [string]$Command
+    )
+
+    New-Item -Path $Key -Force | Out-Null
+    Set-ItemProperty -Path $Key -Name 'MUIVerb' -Value 'Open with picasa-rs' `
+        -Type String -Force
+    Set-ItemProperty -Path $Key -Name 'Icon' -Value "`"$iconPath`",0" `
+        -Type String -Force
+    Set-ItemProperty -Path $Key -Name 'MultiSelectModel' -Value 'Single' `
+        -Type String -Force
+    New-Item -Path (Join-Path $Key 'command') -Force | Out-Null
+    Set-Item -Path (Join-Path $Key 'command') -Value $Command
+}
+
+Add-ShellVerb -Key 'HKCU:\Software\Classes\SystemFileAssociations\image\shell\PicasaRs' `
+    -Command $openCommand
+Add-ShellVerb -Key 'HKCU:\Software\Classes\Directory\shell\PicasaRs' `
+    -Command $openCommand
+Add-ShellVerb -Key 'HKCU:\Software\Classes\Directory\Background\shell\PicasaRs' `
+    -Command "`"$targetExe`" `"%V`""
 
 $appPathKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\picasa-rs.exe'
 New-Item -Path $appPathKey -Force | Out-Null

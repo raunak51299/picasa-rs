@@ -51,7 +51,7 @@ foreach ($extension in $Extensions) {
 
     $properties = Get-ItemProperty -Path $extKey -ErrorAction SilentlyContinue
     if ($null -ne $properties -and $properties.'(default)' -eq $progId) {
-        Set-Item -Path $extKey -Value ''
+        Remove-ItemProperty -Path $extKey -Name '(default)' -ErrorAction SilentlyContinue
     }
 
     $openWithKey = Join-Path $extKey 'OpenWithProgids'
@@ -63,6 +63,15 @@ foreach ($extension in $Extensions) {
 Remove-Item -Path (Join-Path $classes $progId) -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path (Join-Path $classes 'Applications\picasa-rs.exe') `
     -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\Software\Classes\SystemFileAssociations\image\shell\PicasaRs' `
+    -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\Software\Classes\Directory\shell\PicasaRs' `
+    -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\Software\Classes\Directory\Background\shell\PicasaRs' `
+    -Recurse -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\Software\RegisteredApplications' -Name 'picasa-rs' `
+    -ErrorAction SilentlyContinue
+Remove-Item -Path 'HKCU:\Software\picasa-rs' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\picasa-rs.exe' `
     -Recurse -Force -ErrorAction SilentlyContinue
 

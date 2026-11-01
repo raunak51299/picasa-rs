@@ -222,8 +222,10 @@ one-time cost that Picasa did not pay on every launch.
 Helper files live in `packaging/`:
 
 - `packaging/windows/install.ps1` — copies the release executable to
-  `%LOCALAPPDATA%\Programs\picasa-rs`, registers a per-user ProgID, and
-  associates common image extensions. No administrator rights required.
+  `%LOCALAPPDATA%\Programs\picasa-rs`, registers a per-user ProgID, associates
+  common image extensions, registers with Default Programs, and adds an
+  "Open with picasa-rs" context-menu entry for images and folders. No
+  administrator rights required.
 - `packaging/windows/uninstall.ps1` — removes those associations and optionally
   deletes the installed files.
 - `packaging/windows/picasa-rs.ico` — application icon.
