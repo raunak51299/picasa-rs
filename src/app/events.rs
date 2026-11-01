@@ -36,6 +36,7 @@ impl App {
         let event_path = match &event {
             LoaderEvent::Full(full) => &full.path,
             LoaderEvent::Thumb(thumb) => &thumb.path,
+            LoaderEvent::Animation(animation) => &animation.path,
             LoaderEvent::Error { path, .. } | LoaderEvent::Stale { path, .. } => path,
         };
         if self.nav.index_of(event_path).is_none() {
@@ -101,6 +102,7 @@ impl App {
                             crate::startup_ms()
                         );
                     }
+                    self.request_animation_for_current();
                 }
 
                 self.evict_photo_cache();
@@ -130,6 +132,16 @@ impl App {
                 self.thumbs.insert(thumb.path.clone(), handle);
                 self.failed_thumb.remove(&thumb.path);
                 self.evict_thumb_cache();
+            }
+            LoaderEvent::Animation(animation) => {
+                if animation.index != self.nav.current() {
+                    return;
+                }
+                if animation.frames.len() < 2 {
+                    self.no_animation.insert(animation.path);
+                    return;
+                }
+                self.start_animation(animation);
             }
             LoaderEvent::Error {
                 path,
@@ -166,6 +178,18 @@ impl App {
                     crate::loader::JobKind::Thumb => {
                         self.failed_thumb.insert(path);
                     }
+                    crate::loader::JobKind::Animation => {
+                        let name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        self.toast = Some(Toast {
+                            text: truncate(&format!("Could not play {name}: {message}"), 150),
+                            until: Instant::now() + TOAST_DURATION,
+                        });
+                        self.failed_animation.insert(path);
+                    }
                 }
                 self.request_window();
             }
@@ -182,9 +206,14 @@ impl App {
                 let needed = match kind {
                     crate::loader::JobKind::Full => index == self.nav.current(),
                     crate::loader::JobKind::Thumb => self.nav.is_near(index, THUMB_RADIUS),
+                    crate::loader::JobKind::Animation => index == self.nav.current(),
                 };
                 if needed {
-                    self.request_window();
+                    if kind == crate::loader::JobKind::Animation {
+                        self.request_animation_for_current();
+                    } else {
+                        self.request_window();
+                    }
                 }
             }
         }

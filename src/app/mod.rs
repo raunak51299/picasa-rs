@@ -1,5 +1,6 @@
 //! Application state machine and winit event handling.
 
+mod animation;
 mod cache;
 mod events;
 mod input;
@@ -21,6 +22,7 @@ use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
 use crate::adjust::Adjustments;
+use crate::animation::Playback;
 use crate::info::{self, PhotoInfo};
 use crate::loader::{Loader, LoaderEvent};
 use crate::preview::PreviewWindow;
@@ -111,6 +113,12 @@ pub struct App {
     camera: Camera,
     photos: HashMap<PathBuf, GpuPhoto>,
     thumbs: HashMap<PathBuf, egui::TextureHandle>,
+    /// Animation of the current photo, if it has more than one frame.
+    animation: Option<Playback>,
+    /// GIF/WebP files known to contain a single frame.
+    no_animation: HashSet<PathBuf>,
+    /// Files whose animation failed to decode; F5 retries them.
+    failed_animation: HashSet<PathBuf>,
     /// Prefetch and thumbnail results held back until the first photo is on
     /// screen, so their CPU/GPU uploads cannot delay the initial present.
     deferred_loader_events: Vec<LoaderEvent>,
@@ -204,6 +212,9 @@ impl App {
             camera: Camera::default(),
             photos: HashMap::new(),
             thumbs: HashMap::new(),
+            animation: None,
+            no_animation: HashSet::new(),
+            failed_animation: HashSet::new(),
             deferred_loader_events: Vec::new(),
             failed_full: HashMap::new(),
             failed_thumb: HashSet::new(),
@@ -398,6 +409,7 @@ impl App {
             loader.set_current(self.nav.current());
         }
 
+        self.animation = None;
         self.scroll_filmstrip = true;
         self.last_click = None;
         self.adjustments = Adjustments::default();
@@ -424,6 +436,7 @@ impl App {
         }
 
         self.request_window();
+        self.request_animation_for_current();
         self.record_activity();
 
         if let Some(window) = &self.window {
@@ -763,6 +776,11 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let now = Instant::now();
+        let animation_advanced = self.advance_animation(now);
+        if animation_advanced && let Some(window) = &self.window {
+            window.request_redraw();
+        }
+
         if self.slideshow.as_ref().is_some_and(|show| show.is_due(now)) {
             self.navigate_by(1);
             if let Some(show) = &mut self.slideshow {
@@ -780,6 +798,7 @@ impl ApplicationHandler<UserEvent> for App {
         let help_deadline = self.show_help_until;
 
         let animating = self.camera.is_animating()
+            || animation_advanced
             || (self.hud_alpha - self.hud_target()).abs() > 0.002
             || (self.current_photo().is_some() && self.photo_fade < 0.999)
             || self.egui_ctx.has_requested_repaint();
@@ -795,6 +814,13 @@ impl ApplicationHandler<UserEvent> for App {
         let mut next_deadline: Option<Instant> = self.preview_until;
         if let Some(show) = &self.slideshow {
             let deadline = show.next_advance();
+            next_deadline = Some(match next_deadline {
+                Some(existing) => existing.min(deadline),
+                None => deadline,
+            });
+        }
+        if let Some(playback) = &self.animation {
+            let deadline = playback.next_deadline();
             next_deadline = Some(match next_deadline {
                 Some(existing) => existing.min(deadline),
                 None => deadline,

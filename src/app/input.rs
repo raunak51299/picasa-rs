@@ -205,7 +205,11 @@ impl App {
                 if !repeat {
                     self.failed_full.clear();
                     self.failed_thumb.clear();
+                    self.failed_animation.clear();
+                    self.no_animation.clear();
+                    self.animation = None;
                     self.request_window();
+                    self.request_animation_for_current();
                 }
             }
             KeyCode::BracketLeft => {
@@ -296,6 +300,15 @@ impl App {
                 self.failed_thumb.remove(&path);
                 self.reload_full.remove(&path);
                 self.reload_thumb.remove(&path);
+                self.failed_animation.remove(&path);
+                self.no_animation.remove(&path);
+                if self
+                    .animation
+                    .as_ref()
+                    .is_some_and(|show| show.path() == path)
+                {
+                    self.animation = None;
+                }
 
                 if let Some(index) = self.nav.index_of(&path) {
                     self.nav.set_current(index);
@@ -328,6 +341,15 @@ impl App {
         self.thumbs.remove(path);
         self.failed_full.remove(path);
         self.failed_thumb.remove(path);
+        self.failed_animation.remove(path);
+        self.no_animation.remove(path);
+        if self
+            .animation
+            .as_ref()
+            .is_some_and(|show| show.path() == path)
+        {
+            self.animation = None;
+        }
         self.reload_full.insert(path.to_path_buf());
         self.reload_thumb.insert(path.to_path_buf());
 

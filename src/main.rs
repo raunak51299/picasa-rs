@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod adjust;
+mod animation;
 mod app;
 mod delete;
 mod info;
@@ -109,6 +110,7 @@ CONTROLS:
 
 SUPPORTED FORMATS:
     JPEG, PNG, WebP, TIFF, BMP, GIF
+    Animated GIF and WebP files play automatically.
 "
     );
 }

@@ -7,12 +7,20 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use image::AnimationDecoder;
+use image::codecs::gif::GifDecoder;
+use image::codecs::webp::WebPDecoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, RgbaImage};
 
 const THUMBNAIL_MAX_EDGE: u32 = 128;
+/// Animated files are decoded into full canvas frames. These caps keep a
+/// pathological GIF from exhausting memory; normal photos are far below them.
+const MAX_ANIMATION_FRAMES: usize = 600;
+const MAX_ANIMATION_BYTES: usize = 256 * 1024 * 1024;
 
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "jfif", "png", "webp", "tif", "tiff", "bmp", "gif",
@@ -75,15 +83,182 @@ pub struct Thumbnail {
     pub height: u32,
 }
 
+/// One fully composed frame of an animated GIF or WebP file.
+#[derive(Debug)]
+pub struct AnimationFrame {
+    pub rgba: Vec<u8>,
+    pub delay: Duration,
+}
+
+/// All frames of an animated file, already scaled for the GPU texture limit.
+#[derive(Debug)]
+pub struct Animation {
+    pub path: PathBuf,
+    pub index: usize,
+    pub width: u32,
+    pub height: u32,
+    pub frames: Vec<AnimationFrame>,
+}
+
+/// Whether the extension can contain an animation. Static GIF/WebP files also
+/// match; they decode to a single frame and are treated as still images.
+pub fn supports_animation(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            extension.eq_ignore_ascii_case("gif") || extension.eq_ignore_ascii_case("webp")
+        })
+        .unwrap_or(false)
+}
+
+/// GIF delays are stored in centiseconds. Browsers treat very short delays as
+/// 100 ms to avoid a slideshow of indistinguishable frames; do the same here.
+pub fn animation_delay(delay: Duration) -> Duration {
+    if delay < Duration::from_millis(20) {
+        Duration::from_millis(100)
+    } else {
+        delay
+    }
+}
+
+/// Decode every frame of an animated GIF or WebP. The caller decides whether
+/// the frame count is worth playing; a single-frame result means the file is
+/// static.
+pub fn decode_animation(path: &Path, index: usize, max_texture_dim: u32) -> Result<Animation> {
+    let format = image::ImageFormat::from_path(path)
+        .with_context(|| format!("could not identify the format of {}", path.display()))?;
+    let limit = max_texture_dim.max(1);
+    let frames = match format {
+        image::ImageFormat::Gif => {
+            let file =
+                File::open(path).with_context(|| format!("could not open {}", path.display()))?;
+            collect_animation_frames(GifDecoder::new(BufReader::new(file))?.into_frames(), limit)?
+        }
+        image::ImageFormat::WebP => {
+            let file =
+                File::open(path).with_context(|| format!("could not open {}", path.display()))?;
+            collect_animation_frames(WebPDecoder::new(BufReader::new(file))?.into_frames(), limit)?
+        }
+        _ => bail!("animated playback is only supported for GIF and WebP files"),
+    };
+
+    let (width, height) = frames
+        .first()
+        .map(|frame| (frame.width, frame.height))
+        .context("animation has no frames")?;
+    Ok(Animation {
+        path: path.to_path_buf(),
+        index,
+        width,
+        height,
+        frames: frames.into_iter().map(|frame| frame.frame).collect(),
+    })
+}
+
+struct SizedFrame {
+    width: u32,
+    height: u32,
+    frame: AnimationFrame,
+}
+
+fn collect_animation_frames<I>(frames: I, limit: u32) -> Result<Vec<SizedFrame>>
+where
+    I: Iterator<Item = image::ImageResult<image::Frame>>,
+{
+    let mut collected: Vec<SizedFrame> = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut raw_dimensions: Option<(u32, u32)> = None;
+    let mut target_dimensions: Option<(u32, u32)> = None;
+
+    for frame in frames {
+        let frame = frame.context("could not decode an animation frame")?;
+        let delay = animation_delay(frame.delay().into());
+        let rgba = frame.into_buffer();
+        let raw = (rgba.width(), rgba.height());
+
+        if let Some(expected) = raw_dimensions {
+            if raw != expected {
+                bail!(
+                    "animation frames have inconsistent dimensions ({}x{} and {}x{})",
+                    expected.0,
+                    expected.1,
+                    raw.0,
+                    raw.1
+                );
+            }
+        } else {
+            raw_dimensions = Some(raw);
+            target_dimensions = Some(fit_dimensions(raw.0, raw.1, limit));
+        }
+
+        let target = target_dimensions.expect("dimensions are set with the first frame");
+        let rgba = if raw == target {
+            rgba
+        } else {
+            image::imageops::resize(&rgba, target.0, target.1, FilterType::Lanczos3)
+        };
+
+        total_bytes = total_bytes
+            .checked_add(rgba.len())
+            .context("animation is too large to decode")?;
+        if collected.len() >= MAX_ANIMATION_FRAMES || total_bytes > MAX_ANIMATION_BYTES {
+            bail!(
+                "animation is too large to play ({} frames, {} MiB)",
+                collected.len() + 1,
+                total_bytes / (1024 * 1024)
+            );
+        }
+        collected.push(SizedFrame {
+            width: target.0,
+            height: target.1,
+            frame: AnimationFrame {
+                rgba: rgba.into_raw(),
+                delay,
+            },
+        });
+    }
+
+    Ok(collected)
+}
+
+/// Resize every frame to the exact dimensions of an existing GPU texture.
+pub fn resize_animation(mut animation: Animation, width: u32, height: u32) -> Animation {
+    if animation.width == width && animation.height == height {
+        return animation;
+    }
+    for frame in &mut animation.frames {
+        let image = RgbaImage::from_raw(
+            animation.width,
+            animation.height,
+            std::mem::take(&mut frame.rgba),
+        )
+        .expect("animation frame dimensions must match its pixel buffer");
+        frame.rgba =
+            image::imageops::resize(&image, width, height, FilterType::Lanczos3).into_raw();
+    }
+    animation.width = width;
+    animation.height = height;
+    animation
+}
+
+fn fit_dimensions(width: u32, height: u32, limit: u32) -> (u32, u32) {
+    if width <= limit && height <= limit {
+        return (width, height);
+    }
+    let scale = (limit as f32 / width.max(height) as f32).min(1.0);
+    (
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    )
+}
+
 pub fn decode_full(path: &Path, index: usize, max_texture_dim: u32) -> Result<FullImage> {
     let mut rgba = decode_rgba(path)?;
     let orientation = read_orientation(path).unwrap_or(1);
 
     let limit = max_texture_dim.max(1);
     if rgba.width() > limit || rgba.height() > limit {
-        let scale = (limit as f32 / rgba.width().max(rgba.height()) as f32).min(1.0);
-        let width = ((rgba.width() as f32 * scale).round() as u32).max(1);
-        let height = ((rgba.height() as f32 * scale).round() as u32).max(1);
+        let (width, height) = fit_dimensions(rgba.width(), rgba.height(), limit);
         log::info!(
             "downscaling {} from {}x{} to {}x{} for the GPU texture limit",
             path.display(),
@@ -116,9 +291,7 @@ pub fn downscale_full(full: FullImage, max_texture_dim: u32) -> FullImage {
 
     let image = RgbaImage::from_raw(full.width, full.height, full.rgba)
         .expect("decoded image dimensions must match its pixel buffer");
-    let scale = (limit as f32 / image.width().max(image.height()) as f32).min(1.0);
-    let width = ((image.width() as f32 * scale).round() as u32).max(1);
-    let height = ((image.height() as f32 * scale).round() as u32).max(1);
+    let (width, height) = fit_dimensions(image.width(), image.height(), limit);
     let resized = image::imageops::resize(&image, width, height, FilterType::Lanczos3);
 
     FullImage {
@@ -257,8 +430,13 @@ pub fn orient_rgba(source: &RgbaImage, orientation: u8) -> RgbaImage {
 
 #[cfg(test)]
 mod tests {
-    use super::orient_rgba;
-    use image::{Rgba, RgbaImage};
+    use super::{
+        animation_delay, decode_animation, fit_dimensions, orient_rgba, resize_animation,
+        supports_animation,
+    };
+    use std::time::Duration;
+
+    use image::{Delay, Frame, Rgba, RgbaImage};
 
     fn sample() -> RgbaImage {
         // 2x3 image with distinct pixel values.
@@ -269,6 +447,118 @@ mod tests {
             }
         }
         image
+    }
+
+    #[test]
+    fn gpu_limit_dimensions_preserve_the_aspect_ratio() {
+        assert_eq!(fit_dimensions(400, 200, 8192), (400, 200));
+        assert_eq!(fit_dimensions(4000, 2000, 1000), (1000, 500));
+        assert_eq!(fit_dimensions(2000, 4000, 1000), (500, 1000));
+        assert_eq!(fit_dimensions(1, 1, 0), (1, 1));
+    }
+
+    #[test]
+    fn short_gif_delays_are_clamped() {
+        assert_eq!(animation_delay(Duration::ZERO), Duration::from_millis(100));
+        assert_eq!(
+            animation_delay(Duration::from_millis(10)),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            animation_delay(Duration::from_millis(20)),
+            Duration::from_millis(20)
+        );
+        assert_eq!(
+            animation_delay(Duration::from_millis(250)),
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn only_gif_and_webp_are_animation_candidates() {
+        assert!(supports_animation(std::path::Path::new("a.GIF")));
+        assert!(supports_animation(std::path::Path::new("a.webp")));
+        assert!(!supports_animation(std::path::Path::new("a.jpg")));
+        assert!(!supports_animation(std::path::Path::new("a.png")));
+    }
+
+    #[test]
+    fn gif_animations_decode_every_frame_and_delay() {
+        let directory =
+            std::env::temp_dir().join(format!("picasa-rs-animation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("two.gif");
+
+        let mut file = std::fs::File::create(&path).unwrap();
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut file);
+        encoder
+            .encode_frames([
+                Frame::from_parts(
+                    RgbaImage::from_pixel(4, 3, Rgba([255, 0, 0, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ),
+                Frame::from_parts(
+                    RgbaImage::from_pixel(4, 3, Rgba([0, 255, 0, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(250, 1),
+                ),
+            ])
+            .unwrap();
+        drop(encoder);
+        drop(file);
+
+        let animation = decode_animation(&path, 7, 8192).unwrap();
+        assert_eq!(animation.index, 7);
+        assert_eq!((animation.width, animation.height), (4, 3));
+        assert_eq!(animation.frames.len(), 2);
+        assert_eq!(animation.frames[0].delay, Duration::from_millis(100));
+        assert_eq!(animation.frames[1].delay, Duration::from_millis(250));
+        assert_eq!(animation.frames[0].rgba.len(), 4 * 3 * 4);
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resized_animation_frames_match_the_target_texture() {
+        let directory =
+            std::env::temp_dir().join(format!("picasa-rs-animation-resize-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("two.gif");
+
+        let mut file = std::fs::File::create(&path).unwrap();
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut file);
+        encoder
+            .encode_frames([
+                Frame::from_parts(
+                    RgbaImage::from_pixel(4, 2, Rgba([255, 0, 0, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ),
+                Frame::from_parts(
+                    RgbaImage::from_pixel(4, 2, Rgba([0, 255, 0, 255])),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ),
+            ])
+            .unwrap();
+        drop(encoder);
+        drop(file);
+
+        let animation = decode_animation(&path, 0, 8192).unwrap();
+        let resized = resize_animation(animation, 2, 1);
+        assert_eq!((resized.width, resized.height), (2, 1));
+        for frame in &resized.frames {
+            assert_eq!(frame.rgba.len(), 8);
+        }
+
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -31,12 +31,15 @@ const STALE_THUMB_RADIUS: usize = 48;
 pub enum JobKind {
     Full,
     Thumb,
+    /// Decode every frame of the current animated GIF/WebP.
+    Animation,
 }
 
 #[derive(Debug)]
 pub enum LoaderEvent {
     Full(FullImage),
     Thumb(Thumbnail),
+    Animation(decoder::Animation),
     Error {
         path: PathBuf,
         index: usize,
@@ -96,6 +99,8 @@ fn is_stale(index: usize, current: usize, kind: JobKind) -> bool {
     let radius = match kind {
         JobKind::Full => STALE_FULL_RADIUS,
         JobKind::Thumb => STALE_THUMB_RADIUS,
+        // Animation is only useful for the photo currently on screen.
+        JobKind::Animation => 0,
     };
     index.abs_diff(current) > radius
 }
@@ -246,6 +251,10 @@ impl Loader {
         self.request(path, index, JobKind::Thumb, priority);
     }
 
+    pub fn request_animation(&self, path: &Path, index: usize, priority: u8) {
+        self.request(path, index, JobKind::Animation, priority);
+    }
+
     /// Whether a decode for this file and kind is already queued or running.
     pub fn has_in_flight(&self, path: &Path, kind: JobKind) -> bool {
         lock(&self.shared.in_flight).contains(&(path.to_path_buf(), kind))
@@ -304,6 +313,11 @@ fn decode_job(shared: &Shared, job: &Job) -> LoaderEvent {
             decoder::decode_full(&job.path, job.index, max_texture_dim).map(LoaderEvent::Full)
         }
         JobKind::Thumb => decoder::decode_thumbnail(&job.path, job.index).map(LoaderEvent::Thumb),
+        JobKind::Animation => {
+            let max_texture_dim = shared.max_texture_dim.load(AtomicOrdering::Relaxed);
+            decoder::decode_animation(&job.path, job.index, max_texture_dim)
+                .map(LoaderEvent::Animation)
+        }
     }));
 
     let message = match result {
@@ -401,6 +415,8 @@ mod tests {
         assert!(!is_stale(0, 5, JobKind::Full));
         assert!(!is_stale(48, 0, JobKind::Thumb));
         assert!(is_stale(49, 0, JobKind::Thumb));
+        assert!(!is_stale(0, 0, JobKind::Animation));
+        assert!(is_stale(1, 0, JobKind::Animation));
     }
 
     #[test]

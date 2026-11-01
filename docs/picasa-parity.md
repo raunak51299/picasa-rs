@@ -34,7 +34,7 @@ adds.
 | One-click fixes | Auto colour/contrast, lighten, darken, then save. | GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. JPEG saves keep the original EXIF APP1 segment and re-encode at quality 92. |
 | Open and share | Reveal in Explorer, open in an editor, copy. | Share panel (`C`): copy the current view (including fixes) or path, open in the default application, reveal in Explorer, and print, with `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+E`, `Ctrl+Enter`, and `Ctrl+P` shortcuts. |
 | Print | Printed the current photo with the shell print verb. | Windows shell `print` verb on the current file. |
-| Animated GIF | Played GIF frames with their delays. | Frame-delay playback, with WebP animation if the decoder support is cheap. |
+| Animated GIF | Played GIF frames with their delays. | Frame-delay playback for GIF and animated WebP, looping while the photo is on screen, restarting after navigation, and capped at 600 frames or 256 MiB. |
 | Drag and drop | Dropping a file or folder opened it. | Accept dropped files and folders and rebuild the folder listing. |
 | Open with / associations | Installed as an "Open with" handler. | Keep the CLI path argument working and register associations in the Windows installer. |
 | Single instance | A second launch reused the running viewer. | Forward the new path to the existing process and reuse its window. |

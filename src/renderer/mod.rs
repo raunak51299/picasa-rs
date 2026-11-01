@@ -21,6 +21,9 @@ pub struct GpuPhoto {
     /// EXIF-oriented dimensions.
     pub display_width: u32,
     pub display_height: u32,
+    /// Raw texture dimensions, before EXIF orientation.
+    pub texture_width: u32,
+    pub texture_height: u32,
     uv_row0: [f32; 2],
     uv_row1: [f32; 2],
     uv_offset: [f32; 2],
@@ -320,12 +323,47 @@ impl Renderer {
         GpuPhoto {
             display_width,
             display_height,
+            texture_width: full.width,
+            texture_height: full.height,
             uv_row0,
             uv_row1,
             uv_offset,
             _texture: texture,
             bind_group,
         }
+    }
+
+    /// Replace the pixels of an existing photo texture, keeping its bind group
+    /// and dimensions. Used for animation frames; the caller must pass the
+    /// texture's exact dimensions.
+    pub fn update_photo(&self, photo: &GpuPhoto, rgba: &[u8], width: u32, height: u32) {
+        debug_assert_eq!(photo.texture_width, width);
+        debug_assert_eq!(photo.texture_height, height);
+        debug_assert_eq!(rgba.len(), (width as usize) * (height as usize) * 4);
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &photo._texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let mip_level_count = width.max(height).max(1).ilog2() + 1;
+        self.mipmaps
+            .generate(&self.device, &self.queue, &photo._texture, mip_level_count);
     }
 
     /// Draw one frame. `paint_jobs` must already be tessellated by egui.

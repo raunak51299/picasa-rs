@@ -31,6 +31,10 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
   camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
   the file has them.
+- **Animated photos** — animated GIF and WebP files play automatically with
+  their frame delays, looping while the photo is on screen. Playback restarts
+  from the first frame when you navigate back. Animations larger than 256 MiB
+  fall back to their first frame.
 - **Share actions** — `C` opens a share panel with Copy image, Copy path, Open,
   Show in folder, and Print. Copy image captures the current view, including
   EXIF orientation and color fixes, so it can be pasted into chat or an editor.
@@ -250,11 +254,25 @@ sorting.
 ```
 src/
   main.rs                 CLI, event loop, initial path resolution
-  app.rs                  window, input, HUD/filmstrip, frame loop
+  app/                    window state, input, HUD/filmstrip, frame loop
+    mod.rs                application state and winit event handling
+    animation.rs          animated photo playback and GPU uploads
+    cache.rs              distance-based photo and thumbnail eviction
+    events.rs             loader result handling
+    input.rs              keyboard, mouse, and HUD action handling
+    slideshow.rs          timed slideshow state
+    ui.rs                 HUD, filmstrip, help, and panels
+  adjust.rs               color-fix presets and pixel math
+  animation.rs            animated photo playback timing
+  delete.rs               Recycle Bin shell call
+  info.rs                 EXIF metadata reading and formatting
   preview.rs              native layered startup preview (Windows)
+  rotate.rs               lossless JPEG EXIF orientation rewriting
+  save.rs                 adjusted-image saving and JPEG EXIF preservation
+  share.rs                clipboard, Explorer, open, and print actions
   loader/
     mod.rs                priority worker queue, prefetch, shutdown
-    decoder.rs            image decode, EXIF orientation, thumbnails
+    decoder.rs            image decode, EXIF orientation, thumbnails, animation
   renderer/
     mod.rs                wgpu device/surface, DirectComposition, draw calls
     quad_pipeline.rs      photo and shadow pipelines
@@ -272,6 +290,7 @@ src/
   too; elsewhere the window appears when the GPU is ready.
 - Very large images are limited by the GPU's maximum texture size (typically
   8192 or 16384 px). Larger images are downscaled before upload.
-- GIFs display their first frame only.
+- Animated files are decoded into full-canvas frames and capped at 600 frames
+  or 256 MiB; larger animations show their first frame instead.
 - The viewer is a single-image overlay, not a library manager: it does not index
   folders recursively or maintain a database.
