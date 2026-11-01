@@ -69,6 +69,7 @@ impl App {
             && !self.show_info
             && !self.show_fixes
             && !self.show_share
+            && !self.drag_hover
         {
             return actions;
         }
@@ -900,13 +901,45 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   C: share   |   Del: recycle   |   Esc: close panel / stop / exit",
+                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   C: share   |   Del: recycle   |   Esc: close panel / stop / exit   |   Drop a file or folder to open",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),
                             );
                         });
                 });
+        }
+
+        if self.drag_hover {
+            let rect = ctx.viewport_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::unique("drop-hint"),
+            ));
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(120));
+
+            let card = egui::Rect::from_center_size(rect.center(), egui::vec2(380.0, 82.0));
+            painter.rect_filled(card, 16.0, egui::Color32::from_black_alpha(225));
+            painter.rect_stroke(
+                card,
+                egui::CornerRadius::same(16),
+                egui::Stroke::new(1.0, egui::Color32::from_white_alpha(45)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                card.center() + egui::vec2(0.0, -10.0),
+                egui::Align2::CENTER_CENTER,
+                "Drop to open",
+                egui::FontId::proportional(18.0),
+                egui::Color32::from_gray(240),
+            );
+            painter.text(
+                card.center() + egui::vec2(0.0, 15.0),
+                egui::Align2::CENTER_CENTER,
+                "A photo, or the first image in a folder",
+                egui::FontId::proportional(12.0),
+                egui::Color32::from_gray(175),
+            );
         }
 
         actions

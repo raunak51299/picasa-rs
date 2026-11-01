@@ -14,6 +14,21 @@ pub struct Navigation {
     current: usize,
 }
 
+/// Resolve a user-supplied file or directory to the image that should open.
+/// Directories open their first supported image in natural order.
+pub fn resolve_drop(path: &Path) -> Result<PathBuf> {
+    let path =
+        std::path::absolute(path).with_context(|| format!("invalid path: {}", path.display()))?;
+    if !path.is_dir() {
+        return Ok(path);
+    }
+
+    list_images(&path)?
+        .into_iter()
+        .next()
+        .with_context(|| format!("directory {} contains no supported images", path.display()))
+}
+
 /// List the supported images in `directory`, sorted naturally by filename.
 pub fn list_images(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut paths: Vec<PathBuf> = std::fs::read_dir(directory)
@@ -259,7 +274,7 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{Navigation, list_images, natural_cmp};
+    use super::{Navigation, list_images, natural_cmp, resolve_drop};
     use std::cmp::Ordering;
     use std::collections::HashMap;
     use std::fs;
@@ -302,6 +317,24 @@ mod tests {
             file_names(&directory),
             ["photo1.PnG", "photo2.jpg", "photo02.jpeg", "photo10.JPG"]
         );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn dropped_directories_resolve_to_their_first_image() {
+        let directory = temp_dir("drop");
+        for name in ["photo10.jpg", "photo2.jpg", "notes.txt"] {
+            fs::write(directory.join(name), b"not an image").unwrap();
+        }
+
+        assert_eq!(
+            resolve_drop(&directory).unwrap(),
+            directory.join("photo2.jpg")
+        );
+
+        let file = directory.join("photo10.jpg");
+        assert_eq!(resolve_drop(&file).unwrap(), file);
 
         fs::remove_dir_all(directory).unwrap();
     }

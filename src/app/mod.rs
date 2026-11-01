@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use egui_wgpu::ScreenDescriptor;
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -151,6 +151,8 @@ pub struct App {
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
+    /// True while a file is being dragged over the window.
+    drag_hover: bool,
     modifiers: ModifiersState,
     last_click: Option<(Instant, PhysicalPosition<f64>)>,
     quit_requested: bool,
@@ -243,6 +245,7 @@ impl App {
             pending_save: None,
             slideshow: None,
             slideshow_interval: DEFAULT_INTERVAL,
+            drag_hover: false,
             modifiers: ModifiersState::empty(),
             last_click: None,
             quit_requested: false,
@@ -456,6 +459,41 @@ impl App {
         if self.nav.set_current(index) {
             self.on_current_changed();
         }
+    }
+
+    /// Replace the current folder listing with one built around a dropped
+    /// file, or the first supported image in a dropped folder.
+    fn open_path(&mut self, path: &Path) -> Result<()> {
+        let target = crate::viewer::navigation::resolve_drop(path)?;
+        if !crate::loader::decoder::is_supported(&target) {
+            bail!("not a supported image");
+        }
+        let nav = Navigation::new(&target)?;
+
+        self.nav = nav;
+        self.photos.clear();
+        self.thumbs.clear();
+        self.failed_full.clear();
+        self.failed_thumb.clear();
+        self.reload_full.clear();
+        self.reload_thumb.clear();
+        self.failed_animation.clear();
+        self.no_animation.clear();
+        self.animation = None;
+        self.deferred_loader_events.clear();
+        self.pending_rotation = None;
+        self.pending_delete = None;
+        self.pending_save = None;
+        self.show_info = false;
+        self.photo_info = None;
+        self.show_fixes = false;
+        self.show_share = false;
+        self.adjustments = Adjustments::default();
+        self.slideshow = None;
+        self.drag_hover = false;
+
+        self.on_current_changed();
+        Ok(())
     }
 }
 
@@ -747,6 +785,38 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
+            }
+            WindowEvent::HoveredFile(_) => {
+                self.drag_hover = true;
+                self.record_activity();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.drag_hover = false;
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                self.drag_hover = false;
+                if let Err(error) = self.open_path(&path) {
+                    let message = format!("{error:#}");
+                    log::warn!("could not open dropped path {}: {message}", path.display());
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    self.toast = Some(Toast {
+                        text: truncate(&format!("Could not open {name}: {message}"), 150),
+                        until: Instant::now() + TOAST_DURATION,
+                    });
+                }
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
             WindowEvent::Focused(false) => {
                 self.dragging = false;

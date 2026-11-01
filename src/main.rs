@@ -88,6 +88,7 @@ CONTROLS:
     Home / End          first / last image
     Scroll wheel        zoom around the cursor
     Drag                pan
+    Drop a file/folder  open it and rebuild the folder listing
     Double click / 1    toggle fit and 1:1
     0                   reset view
     Space / S           start / pause slideshow

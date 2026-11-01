@@ -35,7 +35,7 @@ adds.
 | Open and share | Reveal in Explorer, open in an editor, copy. | Share panel (`C`): copy the current view (including fixes) or path, open in the default application, reveal in Explorer, and print, with `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+E`, `Ctrl+Enter`, and `Ctrl+P` shortcuts. |
 | Print | Printed the current photo with the shell print verb. | Windows shell `print` verb on the current file. |
 | Animated GIF | Played GIF frames with their delays. | Frame-delay playback for GIF and animated WebP, looping while the photo is on screen, restarting after navigation, and capped at 600 frames or 256 MiB. |
-| Drag and drop | Dropping a file or folder opened it. | Accept dropped files and folders and rebuild the folder listing. |
+| Drag and drop | Dropping a file or folder opened it. | Accept dropped files and folders and rebuild the folder listing. Done: a dropped photo opens in its folder; a dropped folder opens its first supported image. |
 | Open with / associations | Installed as an "Open with" handler. | Keep the CLI path argument working and register associations in the Windows installer. |
 | Single instance | A second launch reused the running viewer. | Forward the new path to the existing process and reuse its window. |
 | Preferences | Remembered slideshow and viewer settings. | `%APPDATA%\picasa-rs\config.toml` for slideshow interval, scrim opacity, and delete confirmation. |
