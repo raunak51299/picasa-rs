@@ -18,3 +18,10 @@ pollster = "1"
 rayon = "1"
 wgpu = "30"
 winit = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }

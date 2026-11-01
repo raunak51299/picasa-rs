@@ -7,10 +7,13 @@
 
 mod app;
 mod loader;
+mod preview;
 mod renderer;
 mod viewer;
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use winit::event_loop::{ControlFlow, EventLoop};
@@ -18,11 +21,24 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::UserEvent;
 use crate::loader::decoder;
 
+static PROCESS_START: OnceLock<Instant> = OnceLock::new();
+
+/// Milliseconds since the process entered `main`, for startup diagnostics.
+pub(crate) fn startup_ms() -> f64 {
+    PROCESS_START
+        .get()
+        .map(|start| start.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
+}
+
 fn main() -> Result<()> {
+    PROCESS_START.set(Instant::now()).ok();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn,picasa_rs=info"),
     )
+    .format_timestamp_millis()
     .init();
+    log::info!("startup[{:.1}ms]: main", startup_ms());
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -37,9 +53,11 @@ fn main() -> Result<()> {
         .build()
         .context("failed to create the winit event loop")?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    log::info!("startup[{:.1}ms]: event loop created", startup_ms());
 
     let proxy = event_loop.create_proxy();
     let mut app = app::App::new(initial_path, proxy)?;
+    log::info!("startup[{:.1}ms]: app state ready", startup_ms());
 
     event_loop
         .run_app(&mut app)

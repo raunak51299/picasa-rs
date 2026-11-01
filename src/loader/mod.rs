@@ -6,7 +6,10 @@ pub mod decoder;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{
+    AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering as AtomicOrdering,
+};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
@@ -124,10 +127,17 @@ struct Shared {
     in_flight: Mutex<HashSet<(PathBuf, JobKind)>>,
     current_index: AtomicUsize,
     sequence: AtomicU64,
+    /// Updated once the real GPU limit is known. The loader starts before the
+    /// renderer so the first decode can overlap adapter/device creation.
+    max_texture_dim: AtomicU32,
 }
 
 pub struct Loader {
     shared: Arc<Shared>,
+    /// Decoded results are delivered through this channel. The event-loop
+    /// proxy is only a wake-up signal, so results that finish before the GPU
+    /// is ready can be drained synchronously at startup.
+    receiver: Receiver<LoaderEvent>,
     threads: Vec<JoinHandle<()>>,
 }
 
@@ -138,32 +148,56 @@ impl Loader {
             in_flight: Mutex::new(HashSet::new()),
             current_index: AtomicUsize::new(0),
             sequence: AtomicU64::new(0),
+            max_texture_dim: AtomicU32::new(max_texture_dim.max(1)),
         });
 
         let worker_count = std::thread::available_parallelism()
             .map(|count| (count.get().saturating_sub(1)).clamp(1, 4))
             .unwrap_or(2);
 
+        let (sender, receiver) = mpsc::channel();
         let mut threads = Vec::with_capacity(worker_count);
         for worker_index in 0..worker_count {
             let shared = Arc::clone(&shared);
             let proxy = proxy.clone();
+            let sender = sender.clone();
             let handle = std::thread::Builder::new()
                 .name(format!("picasa-loader-{worker_index}"))
-                .spawn(move || worker_loop(shared, proxy, max_texture_dim))
+                .spawn(move || worker_loop(shared, proxy, sender))
                 .expect("failed to spawn image loader thread");
             threads.push(handle);
         }
 
         log::info!("started {worker_count} image loader threads");
 
-        Self { shared, threads }
+        Self {
+            shared,
+            receiver,
+            threads,
+        }
+    }
+
+    /// Take every result that has finished decoding so far. Called from the
+    /// event loop, including once during startup before the window is shown.
+    pub fn drain_events(&self) -> Vec<LoaderEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.receiver.try_recv() {
+            events.push(event);
+        }
+        events
     }
 
     pub fn set_current(&self, index: usize) {
         self.shared
             .current_index
             .store(index, AtomicOrdering::Relaxed);
+    }
+
+    /// Apply the renderer's real texture limit after GPU initialization.
+    pub fn set_max_texture_dim(&self, max_texture_dim: u32) {
+        self.shared
+            .max_texture_dim
+            .store(max_texture_dim.max(1), AtomicOrdering::Relaxed);
     }
 
     pub fn request_full(&self, path: &Path, index: usize, priority: u8) {
@@ -203,7 +237,7 @@ impl Drop for Loader {
     }
 }
 
-fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, max_texture_dim: u32) {
+fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, sender: Sender<LoaderEvent>) {
     while let Some(job) = shared.queue.pop() {
         let current = shared.current_index.load(AtomicOrdering::Relaxed);
         let stale_radius = match job.kind {
@@ -217,16 +251,18 @@ fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, max_textur
                 .lock()
                 .unwrap()
                 .remove(&(job.path.clone(), job.kind));
-            let _ = proxy.send_event(UserEvent::Loader(LoaderEvent::Stale {
+            let _ = sender.send(LoaderEvent::Stale {
                 path: job.path,
                 index: job.index,
                 kind: job.kind,
-            }));
+            });
+            let _ = proxy.send_event(UserEvent::LoaderReady);
             continue;
         }
 
         let result = match job.kind {
             JobKind::Full => {
+                let max_texture_dim = shared.max_texture_dim.load(AtomicOrdering::Relaxed);
                 decoder::decode_full(&job.path, job.index, max_texture_dim).map(LoaderEvent::Full)
             }
             JobKind::Thumb => {
@@ -251,7 +287,8 @@ fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, max_textur
             }
         };
 
-        let _ = proxy.send_event(UserEvent::Loader(event));
+        let _ = sender.send(event);
+        let _ = proxy.send_event(UserEvent::LoaderReady);
         shared
             .in_flight
             .lock()

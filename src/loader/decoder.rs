@@ -105,6 +105,74 @@ pub fn decode_full(path: &Path, index: usize, max_texture_dim: u32) -> Result<Fu
     })
 }
 
+/// Downscale an already-decoded image to the GPU texture limit. This is only
+/// used if the loader's early, conservative limit turns out to be larger than
+/// the actual device limit.
+pub fn downscale_full(full: FullImage, max_texture_dim: u32) -> FullImage {
+    let limit = max_texture_dim.max(1);
+    if full.width <= limit && full.height <= limit {
+        return full;
+    }
+
+    let image = RgbaImage::from_raw(full.width, full.height, full.rgba)
+        .expect("decoded image dimensions must match its pixel buffer");
+    let scale = (limit as f32 / image.width().max(image.height()) as f32).min(1.0);
+    let width = ((image.width() as f32 * scale).round() as u32).max(1);
+    let height = ((image.height() as f32 * scale).round() as u32).max(1);
+    let resized = image::imageops::resize(&image, width, height, FilterType::Lanczos3);
+
+    FullImage {
+        path: full.path,
+        index: full.index,
+        width,
+        height,
+        rgba: resized.into_raw(),
+        orientation: full.orientation,
+    }
+}
+
+/// Decode an image for the startup preview, scaled to fit inside
+/// `max_width` x `max_height` and already oriented.
+///
+/// This uses a single box-filtered downscale rather than the loader's
+/// high-quality path: the result is on screen for well under a second, and a
+/// 24 MP image must not spend a second in Lanczos before it can be shown.
+#[cfg(windows)]
+pub fn decode_preview(path: &Path, max_width: u32, max_height: u32) -> Result<RgbaImage> {
+    let rgba = decode_rgba(path)?;
+    let orientation = read_orientation(path).unwrap_or(1);
+    let (display_width, display_height) = if orientation >= 5 {
+        (rgba.height(), rgba.width())
+    } else {
+        (rgba.width(), rgba.height())
+    };
+
+    let scale = (max_width.max(1) as f32 / display_width as f32)
+        .min(max_height.max(1) as f32 / display_height as f32)
+        .min(1.0);
+    let width = ((display_width as f32 * scale).round() as u32).max(1);
+    let height = ((display_height as f32 * scale).round() as u32).max(1);
+
+    // Resize in the raw orientation, then rotate the small result. Rotating a
+    // full-size 24 MP buffer first would cost more than the downscale itself.
+    let (raw_width, raw_height) = if orientation >= 5 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let resized = if raw_width == rgba.width() && raw_height == rgba.height() {
+        rgba
+    } else {
+        image::imageops::thumbnail(&rgba, raw_width, raw_height)
+    };
+
+    Ok(if orientation == 1 {
+        resized
+    } else {
+        orient_rgba(&resized, orientation)
+    })
+}
+
 pub fn decode_thumbnail(path: &Path, index: usize) -> Result<Thumbnail> {
     let rgba = decode_rgba(path)?;
     let orientation = read_orientation(path).unwrap_or(1);

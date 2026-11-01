@@ -41,12 +41,15 @@ pub struct Renderer {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    format: wgpu::TextureFormat,
     transparent: bool,
     gamma_target: bool,
     max_texture_side: u32,
     quad: QuadPipelines,
     mipmaps: MipmapGenerator,
-    egui_renderer: EguiRenderer,
+    /// Created lazily so the first photo can be presented before egui's
+    /// shader pipeline and font atlas are ready.
+    egui_renderer: Option<EguiRenderer>,
 }
 
 impl Renderer {
@@ -81,10 +84,18 @@ impl Renderer {
             backend_options,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
+        log::info!(
+            "startup[{:.1}ms]: wgpu instance created",
+            crate::startup_ms()
+        );
 
         let surface = instance
             .create_surface(window)
             .context("could not create a wgpu surface for the window")?;
+        log::info!(
+            "startup[{:.1}ms]: wgpu surface created",
+            crate::startup_ms()
+        );
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
@@ -93,6 +104,7 @@ impl Renderer {
             ..Default::default()
         }))
         .context("no compatible GPU adapter was found")?;
+        log::info!("startup[{:.1}ms]: adapter selected", crate::startup_ms());
 
         let adapter_info = adapter.get_info();
         log::info!(
@@ -107,7 +119,7 @@ impl Renderer {
             ..Default::default()
         }))
         .context("could not create a wgpu device")?;
-        log::info!("device created");
+        log::info!("startup[{:.1}ms]: device created", crate::startup_ms());
 
         let capabilities = surface.get_capabilities(&adapter);
         if capabilities.formats.is_empty() {
@@ -154,13 +166,18 @@ impl Renderer {
         };
 
         surface.configure(&device, &config);
-        log::info!("surface configured");
+        log::info!("startup[{:.1}ms]: surface configured", crate::startup_ms());
 
         let quad = QuadPipelines::new(&device, format);
-        log::info!("quad pipelines ready");
+        log::info!(
+            "startup[{:.1}ms]: quad pipelines ready",
+            crate::startup_ms()
+        );
         let mipmaps = MipmapGenerator::new(&device, PHOTO_TEXTURE_FORMAT);
-        let egui_renderer = EguiRenderer::new(&device, format, RendererOptions::default());
-        log::info!("egui renderer ready");
+        log::info!(
+            "startup[{:.1}ms]: photo pipelines ready",
+            crate::startup_ms()
+        );
         let max_texture_side = device.limits().max_texture_dimension_2d;
 
         log::info!(
@@ -176,17 +193,35 @@ impl Renderer {
             queue,
             surface,
             config,
+            format,
             transparent,
             gamma_target: !format.is_srgb(),
             max_texture_side,
             quad,
             mipmaps,
-            egui_renderer,
+            egui_renderer: None,
         })
     }
 
     pub fn max_texture_side(&self) -> u32 {
         self.max_texture_side
+    }
+
+    fn ensure_egui(&mut self) {
+        if self.egui_renderer.is_some() {
+            return;
+        }
+
+        let start = std::time::Instant::now();
+        self.egui_renderer = Some(EguiRenderer::new(
+            &self.device,
+            self.format,
+            RendererOptions::default(),
+        ));
+        log::info!(
+            "egui renderer ready in {:.1}ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -201,6 +236,7 @@ impl Renderer {
     }
 
     pub fn create_photo(&self, full: &FullImage) -> GpuPhoto {
+        let t0 = std::time::Instant::now();
         let mip_level_count = full.width.max(full.height).max(1).ilog2() + 1;
         let size = wgpu::Extent3d {
             width: full.width,
@@ -237,8 +273,10 @@ impl Renderer {
             size,
         );
 
+        let t_upload = t0.elapsed();
         self.mipmaps
             .generate(&self.device, &self.queue, &texture, mip_level_count);
+        let t_mips = t0.elapsed();
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -258,6 +296,14 @@ impl Renderer {
 
         let (uv_row0, uv_row1, uv_offset) = full.uv_transform();
         let (display_width, display_height) = full.display_size();
+        log::debug!(
+            "create_photo {}x{}: upload {:?}, mips {:?}, total {:?}",
+            full.width,
+            full.height,
+            t_upload,
+            t_mips - t_upload,
+            t0.elapsed()
+        );
 
         GpuPhoto {
             display_width,
@@ -280,17 +326,24 @@ impl Renderer {
     ) -> Result<()> {
         // Consume the deltas up front: egui 0.37 panics if a TexturesDelta
         // with pending set/free entries is dropped, including on early returns.
-        for (id, deltas) in &textures_delta.set {
-            for delta in deltas {
-                self.egui_renderer
-                    .update_texture(&self.device, &self.queue, *id, delta);
+        if !paint_jobs.is_empty()
+            || !textures_delta.set.is_empty()
+            || !textures_delta.free.is_empty()
+        {
+            self.ensure_egui();
+        }
+        if let Some(egui_renderer) = self.egui_renderer.as_mut() {
+            for (id, deltas) in &textures_delta.set {
+                for delta in deltas {
+                    egui_renderer.update_texture(&self.device, &self.queue, *id, delta);
+                }
             }
+            textures_delta.set.clear();
+            for id in &textures_delta.free {
+                egui_renderer.free_texture(id);
+            }
+            textures_delta.free.clear();
         }
-        textures_delta.set.clear();
-        for id in &textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-        textures_delta.free.clear();
 
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
@@ -322,13 +375,16 @@ impl Renderer {
                 label: Some("frame_encoder"),
             });
 
-        let user_command_buffers = self.egui_renderer.update_buffers(
-            &self.device,
-            &self.queue,
-            &mut encoder,
-            paint_jobs,
-            &screen,
-        );
+        let user_command_buffers = match self.egui_renderer.as_mut() {
+            Some(egui_renderer) => egui_renderer.update_buffers(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                paint_jobs,
+                &screen,
+            ),
+            None => Vec::new(),
+        };
 
         if let Some(draw) = &photo {
             let uniforms = PhotoUniforms {
@@ -412,7 +468,9 @@ impl Renderer {
                 pass.draw(0..6, 0..1);
             }
 
-            self.egui_renderer.render(&mut pass, paint_jobs, &screen);
+            if let Some(egui_renderer) = self.egui_renderer.as_ref() {
+                egui_renderer.render(&mut pass, paint_jobs, &screen);
+            }
         }
 
         if !user_command_buffers.is_empty() {
@@ -421,65 +479,6 @@ impl Renderer {
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(surface_texture);
 
-        Ok(())
-    }
-
-    /// Present a single dimmed frame so the window never flashes white.
-    pub fn render_empty(&mut self) -> Result<()> {
-        let surface_texture = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Outdated
-            | wgpu::CurrentSurfaceTexture::Lost => return Ok(()),
-            wgpu::CurrentSurfaceTexture::Validation => {
-                anyhow::bail!("wgpu validation error while acquiring the surface texture");
-            }
-        };
-
-        let view = surface_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("empty_frame_encoder"),
-            });
-        {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("empty_frame_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(if self.transparent {
-                            wgpu::Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: DIM_BACKDROP_ALPHA,
-                            }
-                        } else {
-                            wgpu::Color {
-                                r: 0.015,
-                                g: 0.015,
-                                b: 0.02,
-                                a: 1.0,
-                            }
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-        }
-        self.queue.submit(Some(encoder.finish()));
-        self.queue.present(surface_texture);
         Ok(())
     }
 }

@@ -2059,6 +2059,7 @@ dependencies = [
  "pollster",
  "rayon",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

@@ -11,8 +11,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 
 - **Transparent desktop backdrop** — the desktop stays visible through a 75%
   black scrim, so the photo floats over your workspace instead of replacing it.
-- **Instant display** — the image is decoded on a background worker and uploaded
-  straight to the GPU; the window is presented as soon as the surface is ready.
+- **Instant display** — a native layered preview paints the dim backdrop in about
+  20 ms and the first photo in about 0.1 s while `wgpu` initializes. The GPU
+  frame takes over with the same fit, orientation, and position.
 - **Cursor-anchored zoom and pan** — the point under the pointer stays put while
   zooming. Motion is critically damped and frame-rate independent.
 - **EXIF-aware orientation** — all eight EXIF orientation values are applied
@@ -123,6 +124,48 @@ Notes:
   produced a DXGI swapchain creation failure (`0x887A0001`), so the viewer does
   not set always-on-top. The fullscreen window already covers the taskbar.
 
+## Startup performance
+
+On Windows the first frame has two separate costs:
+
+1. **Adapter and device creation.** `wgpu`'s DX12 backend enumerates every
+   exposed adapter and creates a D3D12 device for each one. On the development
+   machine (Intel Iris Xe) this takes roughly 0.6–0.8 s warm and 1.2 s cold, and
+   it happens before a single pixel can be presented. This is the floor for a
+   `wgpu`/DX12 viewer.
+2. **Decoding and uploading the photo.** The background loader starts before the
+   GPU is initialized, so by the time the device is ready the first image is
+   usually decoded. Upload plus mipmap generation takes a few milliseconds.
+
+To hide the adapter cost, picasa-rs paints a native layered Win32 preview before
+`wgpu` starts: the 75% scrim appears in about 20 ms, and the first photo is
+decoded, scaled, and composited on a worker thread in roughly 0.1 s for a
+typical 1600×1000 JPEG and about 0.2 s for a 24 MP (6000×4000) image. The
+preview is removed a few frames after the real swapchain presents, so the
+hand-off is invisible.
+
+Warm, alternating launches of the same 1600×1000 JPEG (medians of five runs on
+the development machine; expect ±15% run-to-run variance):
+
+| Milestone | Before | After |
+| :--- | ---: | ---: |
+| Photo visible | ~1.37 s | ~0.1 s (native preview) |
+| GPU window visible | ~1.16 s | ~1.07 s |
+| GPU frame presented | ~1.38 s | ~1.17 s |
+
+The remaining ~1 s is DX12 adapter/device initialization. It can only be removed
+by changing the architecture: keeping a process resident (a tray app or
+pre-warmed helper), using a lighter presentation path, or accepting a less
+capable renderer. For a one-shot, transparent, GPU-composited viewer, the native
+preview is the largest win available.
+
+Compared with Picasa: Picasa 3 was a long-lived native application. Its window,
+image pipeline, and thumbnail database were already initialized, so opening a
+photo only required decoding and drawing it. picasa-rs starts from a cold process
+each time and must create a GPU device before it can draw. The preview closes
+most of the perceived gap for a single photo, but the GPU path still has a
+one-time cost that Picasa did not pay on every launch.
+
 ## Packaging
 
 Helper files live in `packaging/`:
@@ -164,6 +207,7 @@ sorting.
 src/
   main.rs                 CLI, event loop, initial path resolution
   app.rs                  window, input, HUD/filmstrip, frame loop
+  preview.rs              native layered startup preview (Windows)
   loader/
     mod.rs                priority worker queue, prefetch, shutdown
     decoder.rs            image decode, EXIF orientation, thumbnails
@@ -180,7 +224,8 @@ src/
 ## Known limitations
 
 - Transparency is Windows-only in practice; other platforms fall back to the
-  compositor's available alpha modes.
+  compositor's available alpha modes. The native startup preview is Windows-only
+  too; elsewhere the window appears when the GPU is ready.
 - Very large images are limited by the GPU's maximum texture size (typically
   8192 or 16384 px). Larger images are downscaled before upload.
 - GIFs display their first frame only.

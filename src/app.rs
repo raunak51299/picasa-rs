@@ -14,7 +14,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
+use crate::loader::decoder;
 use crate::loader::{Loader, LoaderEvent};
+use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
 use crate::viewer::camera::{Camera, Vec2};
 use crate::viewer::navigation::Navigation;
@@ -27,7 +29,8 @@ const PHOTO_FADE_SECONDS: f32 = 0.18;
 const HELP_DURATION: Duration = Duration::from_secs(7);
 
 pub enum UserEvent {
-    Loader(LoaderEvent),
+    /// A loader result is waiting in the loader channel.
+    LoaderReady,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,16 +47,24 @@ enum UiAction {
 }
 
 pub struct App {
-    proxy: EventLoopProxy<UserEvent>,
     nav: Navigation,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    /// Native dim + photo preview shown until the GPU presents its first frame.
+    preview: Option<PreviewWindow>,
+    /// When to drop the preview after the first GPU present. It lingers for a
+    /// few frames so DWM has composited the swapchain before the layered
+    /// window disappears, otherwise the desktop can flash for one frame.
+    preview_until: Option<Instant>,
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     loader: Option<Loader>,
     camera: Camera,
     photos: HashMap<PathBuf, GpuPhoto>,
     thumbs: HashMap<PathBuf, egui::TextureHandle>,
+    /// Prefetch and thumbnail results held back until the first photo is on
+    /// screen, so their CPU/GPU uploads cannot delay the initial present.
+    deferred_loader_events: Vec<LoaderEvent>,
     failed_full: HashMap<PathBuf, String>,
     failed_thumb: HashSet<PathBuf>,
     cursor: Option<PhysicalPosition<f64>>,
@@ -70,16 +81,25 @@ pub struct App {
     show_help_until: Instant,
     last_click: Option<(Instant, PhysicalPosition<f64>)>,
     quit_requested: bool,
+    startup_photo_ready: bool,
+    startup_photo_presented: bool,
 }
 
 impl App {
     pub fn new(initial_path: PathBuf, proxy: EventLoopProxy<UserEvent>) -> Result<Self> {
+        let scan_start = Instant::now();
         let nav = Navigation::new(&initial_path).with_context(|| {
             format!(
                 "could not build a folder listing for {}",
                 initial_path.display()
             )
         })?;
+        log::info!(
+            "startup[{:.1}ms]: folder scanned in {:.1}ms ({} images)",
+            crate::startup_ms(),
+            scan_start.elapsed().as_secs_f64() * 1000.0,
+            nav.len()
+        );
 
         let egui_ctx = egui::Context::default();
         egui_ctx.set_theme(egui::Theme::Dark);
@@ -90,19 +110,33 @@ impl App {
             style.spacing.button_padding = egui::vec2(8.0, 4.0);
         });
 
+        // Start the first decode before the window and GPU exist. Adapter and
+        // device creation can take hundreds of milliseconds; decoding in
+        // parallel hides most of that latency. 8192 is a safe initial texture
+        // limit and is replaced with the real GPU limit once it is known.
+        let loader = Loader::new(proxy.clone(), 8192);
+        loader.set_current(nav.current());
+        loader.request_full(nav.current_path(), nav.current(), 3);
+        log::info!(
+            "startup[{:.1}ms]: loader started, current image queued",
+            crate::startup_ms()
+        );
+
         let now = Instant::now();
 
         Ok(Self {
-            proxy,
             nav,
             window: None,
             renderer: None,
+            preview: None,
+            preview_until: None,
             egui_ctx,
             egui_state: None,
-            loader: None,
+            loader: Some(loader),
             camera: Camera::default(),
             photos: HashMap::new(),
             thumbs: HashMap::new(),
+            deferred_loader_events: Vec::new(),
             failed_full: HashMap::new(),
             failed_thumb: HashSet::new(),
             cursor: None,
@@ -119,6 +153,8 @@ impl App {
             show_help_until: now + HELP_DURATION,
             last_click: None,
             quit_requested: false,
+            startup_photo_ready: false,
+            startup_photo_presented: false,
         })
     }
 
@@ -140,6 +176,18 @@ impl App {
             }
             None => (None, PhysicalSize::new(1280, 800)),
         };
+
+        let preview_position = position.unwrap_or(PhysicalPosition::new(0, 0));
+        match PreviewWindow::show(
+            self.nav.current_path(),
+            preview_position.x,
+            preview_position.y,
+            size.width,
+            size.height,
+        ) {
+            Ok(preview) => self.preview = Some(preview),
+            Err(error) => log::warn!("could not show the startup preview: {error:#}"),
+        }
 
         let mut attributes = Window::default_attributes()
             .with_title("picasa-rs")
@@ -168,23 +216,22 @@ impl App {
             .to_string();
         window.set_title(&format!("{title_name} — picasa-rs"));
 
-        log::info!("window created");
+        log::info!("startup[{:.1}ms]: window created", crate::startup_ms());
         let renderer =
             Renderer::new(window.clone()).context("could not initialize the wgpu renderer")?;
-        log::info!("renderer ready");
+        log::info!("startup[{:.1}ms]: renderer ready", crate::startup_ms());
 
+        let max_texture_side = renderer.max_texture_side();
         let egui_state = egui_winit::State::new(
             self.egui_ctx.clone(),
             egui::ViewportId::ROOT,
             &*window,
             Some(window.scale_factor() as f32),
             window.theme(),
-            Some(renderer.max_texture_side() as usize),
+            Some(max_texture_side as usize),
         );
 
-        log::info!("egui state ready");
-        let loader = Loader::new(self.proxy.clone(), renderer.max_texture_side());
-        log::info!("loader ready");
+        log::info!("startup[{:.1}ms]: egui state ready", crate::startup_ms());
 
         self.camera
             .set_viewport(size.width as f32, size.height as f32);
@@ -192,29 +239,33 @@ impl App {
         self.window = Some(window.clone());
         self.renderer = Some(renderer);
         self.egui_state = Some(egui_state);
-        self.loader = Some(loader);
 
         if let Some(loader) = &self.loader {
+            loader.set_max_texture_dim(max_texture_side);
             loader.set_current(self.nav.current());
         }
 
+        // The first decode was started before the window existed and has
+        // almost certainly finished by now. Drain it before the first present
+        // so the window never appears without its photo.
+        self.drain_loader_events();
+        self.on_current_changed();
+
         // Acquiring a surface image for a hidden window can block on some
         // Vulkan drivers, so make the window visible before the first present.
-        log::info!("showing window");
+        log::info!("startup[{:.1}ms]: showing window", crate::startup_ms());
         window.set_visible(true);
-        log::info!("window visible: {:?}", window.is_visible());
+        log::info!(
+            "startup[{:.1}ms]: window visible: {:?}",
+            crate::startup_ms(),
+            window.is_visible()
+        );
         window.request_redraw();
-
-        if let Some(renderer) = &mut self.renderer {
-            log::info!("drawing initial frame");
-            if let Err(error) = renderer.render_empty() {
-                log::warn!("could not draw the initial frame: {error:#}");
-            }
-            log::info!("initial frame done");
-        }
-
-        self.on_current_changed();
         self.last_frame = Instant::now();
+        log::info!(
+            "startup[{:.1}ms]: load requests queued",
+            crate::startup_ms()
+        );
 
         Ok(())
     }
@@ -299,7 +350,31 @@ impl App {
         }
     }
 
+    fn drain_loader_events(&mut self) {
+        if self.renderer.is_none() || self.window.is_none() {
+            return;
+        }
+        let events = match &self.loader {
+            Some(loader) => loader.drain_events(),
+            None => return,
+        };
+        for event in events {
+            self.on_loader_event(event);
+        }
+    }
+
     fn on_loader_event(&mut self, event: LoaderEvent) {
+        if !self.startup_photo_presented {
+            let is_current_full = matches!(
+                &event,
+                LoaderEvent::Full(full) if full.index == self.nav.current()
+            );
+            if !is_current_full {
+                self.deferred_loader_events.push(event);
+                return;
+            }
+        }
+
         match event {
             LoaderEvent::Full(full) => {
                 let index = full.index;
@@ -316,6 +391,17 @@ impl App {
                 let Some(renderer) = &self.renderer else {
                     return;
                 };
+                let max_texture_side = renderer.max_texture_side();
+                let full = if full.width > max_texture_side || full.height > max_texture_side {
+                    log::warn!(
+                        "{} exceeds the GPU texture limit ({}px); downscaling",
+                        full.path.display(),
+                        max_texture_side
+                    );
+                    decoder::downscale_full(full, max_texture_side)
+                } else {
+                    full
+                };
                 let gpu = renderer.create_photo(&full);
 
                 let is_current = index == self.nav.current();
@@ -327,8 +413,20 @@ impl App {
 
                 if is_current {
                     self.camera.set_image(display_width, display_height);
-                    self.photo_fade = 0.0;
-                    self.photo_fade_start = Instant::now();
+                    if self.startup_photo_ready {
+                        self.photo_fade = 0.0;
+                        self.photo_fade_start = Instant::now();
+                    } else {
+                        // The native preview already shows this photo. Present
+                        // the GPU version at full opacity so the hand-off is
+                        // seamless instead of fading in from the backdrop.
+                        self.photo_fade = 1.0;
+                        self.startup_photo_ready = true;
+                        log::info!(
+                            "startup[{:.1}ms]: current photo uploaded",
+                            crate::startup_ms()
+                        );
+                    }
                 }
 
                 self.evict_photo_cache();
@@ -569,41 +667,59 @@ impl App {
             self.photo_fade = 1.0;
         }
 
-        let egui_ctx = self.egui_ctx.clone();
-        let raw_input = self
-            .egui_state
-            .as_mut()
-            .expect("egui state was checked above")
-            .take_egui_input(&window);
-        let mut actions = Vec::new();
-        let full_output = egui_ctx.run_pass(raw_input, |ctx| {
-            actions = self.build_ui(ctx);
-        });
+        // On the first frame with a photo, skip egui entirely. That lets the
+        // image appear before the HUD's shader pipeline and font atlas are
+        // built; the next frame draws the chrome over the already-visible
+        // photo.
+        let skip_ui = self.startup_photo_ready
+            && !self.startup_photo_presented
+            && self.current_photo().is_some();
+        let mut paint_jobs = Vec::new();
+        let mut textures_delta = egui::TexturesDelta::default();
+        let mut pixels_per_point = self.egui_ctx.pixels_per_point();
 
-        let egui::FullOutput {
-            platform_output,
-            textures_delta,
-            shapes,
-            pixels_per_point,
-            ..
-        } = full_output;
+        if !skip_ui {
+            let egui_ctx = self.egui_ctx.clone();
+            let raw_input = self
+                .egui_state
+                .as_mut()
+                .expect("egui state was checked above")
+                .take_egui_input(&window);
+            let mut actions = Vec::new();
+            let full_output = egui_ctx.run_pass(raw_input, |ctx| {
+                actions = self.build_ui(ctx);
+            });
 
-        for action in actions {
-            self.apply_action(action);
+            let egui::FullOutput {
+                platform_output,
+                textures_delta: delta,
+                shapes,
+                pixels_per_point: scale,
+                ..
+            } = full_output;
+
+            for action in actions {
+                self.apply_action(action);
+            }
+
+            paint_jobs = egui_ctx.tessellate(shapes, scale);
+            textures_delta = delta;
+            pixels_per_point = scale;
+
+            self.egui_state
+                .as_mut()
+                .expect("egui state was checked above")
+                .handle_platform_output(&window, platform_output);
+            self.ui_hovered = egui_ctx.egui_wants_pointer_input();
+        } else {
+            self.ui_hovered = false;
         }
 
-        let paint_jobs = egui_ctx.tessellate(shapes, pixels_per_point);
         let size = window.inner_size();
         let screen = ScreenDescriptor {
             size_in_pixels: [size.width.max(1), size.height.max(1)],
             pixels_per_point,
         };
-
-        self.egui_state
-            .as_mut()
-            .expect("egui state was checked above")
-            .handle_platform_output(&window, platform_output);
-        self.ui_hovered = egui_ctx.egui_wants_pointer_input();
 
         let center = self.camera.screen_center();
         let half_size = self.camera.screen_half_size();
@@ -628,6 +744,20 @@ impl App {
         if let Err(error) = render_result {
             log::error!("rendering failed: {error:#}");
             event_loop.exit();
+        } else if !self.startup_photo_presented && alpha > 0.0 && self.current_photo().is_some() {
+            self.startup_photo_presented = true;
+            log::info!("startup[{:.1}ms]: photo presented", crate::startup_ms());
+            self.preview_until = Some(Instant::now() + Duration::from_millis(120));
+            if skip_ui {
+                window.request_redraw();
+            }
+
+            // The first image is visible. Now it is safe to upload the
+            // prefetched neighbours without delaying the initial present.
+            let deferred = std::mem::take(&mut self.deferred_loader_events);
+            for event in deferred {
+                self.on_loader_event(event);
+            }
         }
     }
 
@@ -1177,7 +1307,7 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Loader(event) => self.on_loader_event(event),
+            UserEvent::LoaderReady => self.drain_loader_events(),
         }
     }
 
@@ -1188,6 +1318,12 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let now = Instant::now();
+        if let Some(until) = self.preview_until
+            && now >= until
+        {
+            self.preview = None;
+            self.preview_until = None;
+        }
         let hud_deadline = self.last_activity + HUD_IDLE;
         let help_deadline = self.show_help_until;
 
@@ -1204,9 +1340,12 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        let mut next_deadline: Option<Instant> = None;
+        let mut next_deadline: Option<Instant> = self.preview_until;
         if self.hud_alpha > 0.001 && hud_deadline > now {
-            next_deadline = Some(hud_deadline);
+            next_deadline = Some(match next_deadline {
+                Some(existing) => existing.min(hud_deadline),
+                None => hud_deadline,
+            });
         }
         if now < help_deadline {
             next_deadline = Some(match next_deadline {
