@@ -42,9 +42,11 @@ adds.
 | Optional formats | Picasa read a wide range of camera formats. | Skipped after probing: AVIF needs `image`'s `avif-native` feature plus a system libdav1d ≥ 1.3 found by pkg-config (the probe failed here, and the pure-Rust `avif` feature only encodes); HEIC/HEIF needs the native libheif library; RAW would need `rawler` (LGPL-2.1) plus demosaicing. No unverifiable dependency was added. |
 
 One intentional difference: Picasa's viewer closed when the dimmed desktop was
-clicked. picasa-rs instead drops into a borderless, photo-sized window that
-keeps the photo, HUD, and draggable filmstrip; a top-right `×` (or `Q` / `Esc`)
-closes it. Clicking the dimmed area again while windowed is inert.
+clicked. picasa-rs instead drops into a photo-sized window that keeps the photo,
+HUD, and draggable filmstrip. Windowed mode uses the native Windows title bar
+for minimize, maximize, and close; in fullscreen a quarter-circle `×` in the
+top-right corner (or `Q` / `Esc`) closes it. Clicking the dimmed area again
+while windowed is inert.
 
 ## Deliberately out of scope
 

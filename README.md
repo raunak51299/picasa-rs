@@ -3,7 +3,7 @@
 A Picasa-inspired quick photo viewer for the desktop: a borderless, fullscreen
 overlay that dims the desktop behind the photo, opens quickly, and lets you
 scrub through a folder with the arrow keys. Clicking the dimmed desktop drops
-into a borderless, photo-sized window.
+into a photo-sized window with the native Windows title bar.
 
 Built with Rust, [`winit`](https://crates.io/crates/winit),
 [`wgpu`](https://crates.io/crates/wgpu), and [`egui`](https://crates.io/crates/egui).
@@ -33,10 +33,10 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   mouse movement and fade away when idle. Drag the filmstrip to scroll it, or
   click a thumbnail to jump to that photo.
 - **Windowed mode** — clicking the dimmed desktop leaves fullscreen for a
-  borderless, resizable window sized to the photo and centred on the monitor.
-  Drag any edge or corner to resize it. The window stays transparent and keeps
-  the HUD, filmstrip, and a top-right close button; clicking outside the photo
-  while windowed does nothing.
+  resizable window sized to the photo and centred on the monitor. It uses the
+  native Windows title bar with minimize, maximize, and close, while the client
+  area stays transparent and keeps the HUD and filmstrip. Drag any edge or
+  corner to resize it; clicking outside the photo while windowed does nothing.
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
   (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
   slideshow without closing the viewer.
@@ -145,7 +145,8 @@ $env:RUST_LOG = "info"
 | `Q` | Close |
 | Click outside the photo | Leave fullscreen for a photo-sized window (inert when windowed) |
 | Drag a window edge or corner | Resize the windowed view |
-| Top-right `×` | Close |
+| Top-right `×` (fullscreen) | Close |
+| Native title-bar buttons (windowed) | Minimize, maximize, or close |
 
 ### Saving color fixes
 
@@ -194,11 +195,12 @@ supports `PreMultiplied` alpha. The renderer:
 
 The result is true per-pixel transparency: the desktop is visible at 25% of its
 original brightness around the photo. Clicking that dimmed area leaves
-fullscreen for a borderless, resizable window sized to the photo and centred on
-the monitor, where the same transparency is kept. A `×` button in the top-right
-corner closes the viewer, and clicking the dimmed area while windowed is inert.
-To change the dim level, edit `DIM_BACKDROP_ALPHA` in `src/renderer/mod.rs`
-(`0.0` is fully clear, `1.0` is fully opaque).
+fullscreen for a resizable window sized to the photo and centred on the monitor,
+where the same transparency is kept. Windowed mode uses the native Windows title
+bar (minimize, maximize, and close). In fullscreen, a quarter-circle `×` in the
+top-right corner closes the viewer, and clicking the dimmed area while windowed
+is inert. To change the dim level, edit `DIM_BACKDROP_ALPHA` in
+`src/renderer/mod.rs` (`0.0` is fully clear, `1.0` is fully opaque).
 
 Notes:
 
