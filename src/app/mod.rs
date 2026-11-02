@@ -137,6 +137,7 @@ pub struct App {
     /// few frames so DWM has composited the swapchain before the layered
     /// window disappears, otherwise the desktop can flash for one frame.
     preview_until: Option<Instant>,
+    preview_drop_pending: bool,
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     loader: Option<Loader>,
@@ -163,6 +164,10 @@ pub struct App {
     last_activity: Instant,
     last_frame: Instant,
     hud_alpha: f32,
+    /// False until the first egui frame has been presented; that frame is
+    /// slow, so the HUD fade only starts afterwards.
+    hud_warmed: bool,
+    hud_intro_done: bool,
     /// Pointer position where the HUD was last kept awake. The HUD only
     /// reappears once the pointer moves away from it by a visible amount.
     hud_anchor: Option<PhysicalPosition<f64>>,
@@ -201,6 +206,26 @@ pub struct App {
 
 /// Letter shortcuts follow the character the user's layout produces (so R is
 /// R on AZERTY or Dvorak); everything else uses the physical key.
+/// Prefer Segoe UI for the HUD. The bundled font renders stray bright boxes
+/// next to some glyphs; if Segoe UI is missing the defaults stay in place.
+fn install_system_font(ctx: &egui::Context) {
+    let windir = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
+    let path = Path::new(&windir).join("Fonts").join("segoeui.ttf");
+    let Ok(bytes) = std::fs::read(&path) else {
+        log::debug!("system font {} not found", path.display());
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "segoe-ui".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "segoe-ui".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
 fn shortcut_code(logical: &Key, physical: PhysicalKey) -> Option<KeyCode> {
     if let Key::Character(text) = logical {
         let mut chars = text.chars();
@@ -262,12 +287,16 @@ impl App {
         );
 
         let egui_ctx = egui::Context::default();
+        install_system_font(&egui_ctx);
         egui_ctx.set_theme(egui::Theme::Dark);
         egui_ctx.all_styles_mut(|style| {
             style.visuals = egui::Visuals::dark();
             style.visuals.override_text_color = Some(egui::Color32::from_rgb(232, 234, 240));
             style.spacing.item_spacing = egui::vec2(8.0, 6.0);
             style.spacing.button_padding = egui::vec2(8.0, 4.0);
+            // Subpixel-binned glyphs (".", "/", "+") render with stray bright
+            // boxes in this egui version.
+            style.visuals.text_options.subpixel_binning = false;
         });
 
         // Start the first decode before the window and GPU exist. Adapter and
@@ -295,6 +324,7 @@ impl App {
             renderer: None,
             preview: None,
             preview_until: None,
+            preview_drop_pending: false,
             egui_ctx,
             egui_state: None,
             loader: Some(loader),
@@ -314,7 +344,9 @@ impl App {
             drag_last: None,
             last_activity: now,
             last_frame: now,
-            hud_alpha: 1.0,
+            hud_alpha: 0.0,
+            hud_warmed: false,
+            hud_intro_done: false,
             hud_anchor: None,
             ui_hovered: false,
             resize_hovered: false,
@@ -411,7 +443,13 @@ impl App {
         log::info!("startup[{:.1}ms]: window created", crate::startup_ms());
         let mut renderer =
             Renderer::new(window.clone()).context("could not initialize the wgpu renderer")?;
-        renderer.set_backdrop_alpha(self.preferences.scrim_opacity);
+        // While the native preview is up it already paints the dim backdrop;
+        // stacking a second one on top would flash noticeably darker.
+        renderer.set_backdrop_alpha(if self.preview.is_some() {
+            0.0
+        } else {
+            self.preferences.scrim_opacity
+        });
         log::info!("startup[{:.1}ms]: renderer ready", crate::startup_ms());
 
         let max_texture_side = renderer.max_texture_side();
@@ -749,7 +787,8 @@ impl App {
         self.camera.update(dt);
 
         let hud_target = self.hud_target();
-        let hud_t = 1.0 - (-12.0 * dt).exp();
+        let hud_rate = if self.hud_intro_done { 12.0 } else { 6.0 };
+        let hud_t = 1.0 - (-hud_rate * dt).exp();
         self.hud_alpha += (hud_target - self.hud_alpha) * hud_t;
         if (self.hud_alpha - hud_target).abs() < 0.002 {
             self.hud_alpha = hud_target;
@@ -775,6 +814,9 @@ impl App {
         let mut pixels_per_point = self.egui_ctx.pixels_per_point();
 
         if !skip_ui {
+            if !self.hud_warmed {
+                self.hud_alpha = 0.0;
+            }
             let egui_ctx = self.egui_ctx.clone();
             let raw_input = self
                 .egui_state
@@ -809,6 +851,9 @@ impl App {
             self.ui_hovered = egui_ctx.egui_wants_pointer_input();
         } else {
             self.ui_hovered = false;
+            // Restart the HUD fade so the chrome eases in after the photo
+            // instead of popping in behind the slow first egui frame.
+            self.hud_alpha = 0.0;
         }
 
         let screen = ScreenDescriptor {
@@ -841,10 +886,33 @@ impl App {
                 .expect("renderer was checked above")
                 .render(photo, &paint_jobs, textures_delta, screen)
         };
-        if let Err(error) = render_result {
-            log::error!("rendering failed: {error:#}");
-            event_loop.exit();
-        } else if !self.startup_photo_presented && alpha > 0.0 && self.current_photo().is_some() {
+        let render_ok = match render_result {
+            Ok(()) => true,
+            Err(error) => {
+                log::error!("rendering failed: {error:#}");
+                event_loop.exit();
+                false
+            }
+        };
+        if render_ok && self.preview_drop_pending {
+            self.preview_drop_pending = false;
+            self.preview = None;
+        }
+        if render_ok && !skip_ui && !self.hud_warmed {
+            // The slow first egui frame is on screen; restart the clock so the
+            // fade is not consumed by it.
+            self.hud_warmed = true;
+            self.last_frame = Instant::now();
+            window.request_redraw();
+        } else if render_ok && !self.hud_intro_done && self.hud_alpha >= 0.98 {
+            self.hud_intro_done = true;
+        }
+
+        if render_ok
+            && !self.startup_photo_presented
+            && alpha > 0.0
+            && self.current_photo().is_some()
+        {
             self.startup_photo_presented = true;
             log::info!("startup[{:.1}ms]: photo presented", crate::startup_ms());
             self.preview_until = Some(Instant::now() + Duration::from_millis(120));
@@ -1118,8 +1186,17 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(until) = self.preview_until
             && now >= until
         {
-            self.preview = None;
+            // Hand the dim backdrop to the GPU window first and only then drop
+            // the preview (at the end of the next render), so the two never
+            // stack and there is no gap.
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.set_backdrop_alpha(self.preferences.scrim_opacity);
+            }
+            self.preview_drop_pending = true;
             self.preview_until = None;
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
         let hud_deadline = self.last_activity + HUD_IDLE;
         let help_deadline = self.show_help_until;
