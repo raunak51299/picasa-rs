@@ -584,6 +584,22 @@ impl App {
             return;
         }
 
+        // Window state changes (maximize, fullscreen, restore) can deliver a
+        // redraw before the matching resize event. Reconcile from the window
+        // first, and skip frames while minimized or otherwise zero-sized.
+        let window_size = window.inner_size();
+        if window.is_minimized() == Some(true) || window_size.width == 0 || window_size.height == 0
+        {
+            return;
+        }
+        let surface_size = {
+            let renderer = self.renderer.as_mut().expect("renderer was checked above");
+            if renderer.surface_size() != (window_size.width, window_size.height) {
+                renderer.resize(window_size);
+            }
+            renderer.surface_size()
+        };
+
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.05);
         self.last_frame = now;
@@ -653,9 +669,8 @@ impl App {
             self.ui_hovered = false;
         }
 
-        let size = window.inner_size();
         let screen = ScreenDescriptor {
-            size_in_pixels: [size.width.max(1), size.height.max(1)],
+            size_in_pixels: [surface_size.0.max(1), surface_size.1.max(1)],
             pixels_per_point,
         };
 

@@ -229,6 +229,13 @@ impl Renderer {
         self.max_texture_side
     }
 
+    /// Size of the currently configured surface, in pixels. Rendering must
+    /// use this rather than the window size so egui's scissor always matches
+    /// the render target, even when a redraw arrives before its resize event.
+    pub fn surface_size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
     /// Opacity of the desktop scrim behind the photo, from 0.0 to 1.0.
     pub fn set_backdrop_alpha(&mut self, alpha: f32) {
         self.backdrop_alpha = f64::from(alpha.clamp(0.0, 1.0));
