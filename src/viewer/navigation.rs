@@ -99,6 +99,10 @@ impl Navigation {
         self.paths.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
     pub fn current(&self) -> usize {
         self.current
     }

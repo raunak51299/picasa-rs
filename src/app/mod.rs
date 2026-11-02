@@ -139,7 +139,6 @@ pub struct App {
     last_frame: Instant,
     hud_alpha: f32,
     ui_hovered: bool,
-    filmstrip_hovered: bool,
     /// True while the pointer is over a borderless-window resize edge.
     resize_hovered: bool,
     scroll_filmstrip: bool,
@@ -238,7 +237,6 @@ impl App {
             last_frame: now,
             hud_alpha: 1.0,
             ui_hovered: false,
-            filmstrip_hovered: false,
             resize_hovered: false,
             scroll_filmstrip: true,
             photo_fade: 1.0,

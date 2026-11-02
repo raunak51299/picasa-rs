@@ -335,7 +335,7 @@ impl App {
                 });
                 log::info!("moved {} to the Recycle Bin", path.display());
 
-                if self.nav.len() == 0 {
+                if self.nav.is_empty() {
                     self.quit_requested = true;
                 } else {
                     self.on_current_changed();

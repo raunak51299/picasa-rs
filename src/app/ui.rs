@@ -56,31 +56,11 @@ impl App {
         });
 
         let show_controls = self.hud_alpha > 0.01;
-        let pointer_near_bottom = self
-            .cursor
-            .map(|position| position.y as f32 > self.camera.viewport.y - 230.0)
-            .unwrap_or(false);
-        let show_filmstrip = show_controls && (pointer_near_bottom || self.filmstrip_hovered);
-
-        if !show_controls
-            && !loading
-            && error.is_none()
-            && !show_help
-            && toast.is_none()
-            && rotation.is_none()
-            && deletion.is_none()
-            && saving.is_none()
-            && !self.show_info
-            && !self.show_fixes
-            && !self.show_share
-            && !self.drag_hover
-        {
-            return actions;
-        }
 
         if show_controls {
             let alpha = self.hud_alpha;
-            let bottom_offset = if show_filmstrip { 108.0 } else { 18.0 };
+            // The filmstrip is always visible underneath the control bar.
+            let bottom_offset = 96.0;
             let photo = self.current_photo();
             let file_name = current_path
                 .file_name()
@@ -296,10 +276,10 @@ impl App {
                 });
         }
 
-        if show_filmstrip {
-            let alpha = self.hud_alpha;
+        if !self.nav.is_empty() {
+            // The filmstrip is always visible, even while the control bar is
+            // faded out, so it is drawn at full opacity.
             let mut scroll_to_current = self.scroll_filmstrip;
-            let mut hovered = false;
             let start = current_index.saturating_sub(THUMB_RADIUS);
             let end = (current_index + THUMB_RADIUS + 1).min(self.nav.len());
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -309,15 +289,11 @@ impl App {
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha((180.0 * alpha) as u8))
-                        .stroke(egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_white_alpha((18.0 * alpha) as u8),
-                        ))
+                        .fill(egui::Color32::from_black_alpha(180))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(18)))
                         .corner_radius(egui::CornerRadius::same(16))
                         .inner_margin(egui::Margin::symmetric(9, 7))
                         .show(ui, |ui| {
-                            ui.set_opacity(alpha);
                             ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                             egui::ScrollArea::horizontal()
                                 .id_salt("filmstrip_scroll")
@@ -327,7 +303,7 @@ impl App {
                                 .scroll_source(egui::scroll_area::ScrollSource::ALL)
                                 .on_hover_cursor(egui::CursorIcon::Grab)
                                 .on_drag_cursor(egui::CursorIcon::Grabbing)
-                                .max_height(76.0)
+                                .max_height(62.0)
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         for index in start..end {
@@ -336,14 +312,14 @@ impl App {
                                             };
                                             let selected = index == current_index;
                                             let (rect, response) = ui.allocate_exact_size(
-                                                egui::vec2(64.0, 64.0),
+                                                egui::vec2(52.0, 52.0),
                                                 egui::Sense::click(),
                                             );
 
                                             if let Some(texture) = self.thumbs.get(path) {
                                                 let texture_size = texture.size_vec2();
-                                                let scale = (64.0 / texture_size.x.max(1.0))
-                                                    .min(64.0 / texture_size.y.max(1.0))
+                                                let scale = (52.0 / texture_size.x.max(1.0))
+                                                    .min(52.0 / texture_size.y.max(1.0))
                                                     .min(1.0);
                                                 let draw_size = texture_size * scale;
                                                 let draw_rect = egui::Rect::from_center_size(
@@ -399,8 +375,6 @@ impl App {
                                             }
 
                                             let clicked = response.clicked();
-                                            let item_hovered = response.hovered();
-                                            hovered |= item_hovered;
 
                                             if selected && scroll_to_current {
                                                 response.scroll_to_me(Some(egui::Align::Center));
@@ -424,9 +398,6 @@ impl App {
                 });
 
             self.scroll_filmstrip = scroll_to_current;
-            self.filmstrip_hovered = hovered;
-        } else {
-            self.filmstrip_hovered = false;
         }
 
         if loading {
