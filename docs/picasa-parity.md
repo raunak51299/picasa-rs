@@ -44,9 +44,9 @@ adds.
 One intentional difference: Picasa's viewer closed when the dimmed desktop was
 clicked. picasa-rs instead drops into a photo-sized window that keeps the photo,
 HUD, and draggable filmstrip. Windowed mode uses the native Windows title bar
-for minimize, maximize, and close; in fullscreen a quarter-circle `×` in the
-top-right corner (or `Q` / `Esc`) closes it. Clicking the dimmed area again
-while windowed is inert.
+for minimize and close, and its maximize returns to borderless fullscreen; in
+fullscreen a quarter-circle `×` in the top-right corner (or `Q` / `Esc`) closes
+it. Clicking the dimmed area again while windowed is inert.
 
 ## Deliberately out of scope
 

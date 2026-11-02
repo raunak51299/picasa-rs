@@ -36,7 +36,8 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   resizable window sized to the photo and centred on the monitor. It uses the
   native Windows title bar with minimize, maximize, and close, while the client
   area stays transparent and keeps the HUD and filmstrip. Drag any edge or
-  corner to resize it; clicking outside the photo while windowed does nothing.
+  corner to resize it; the maximize button returns to borderless fullscreen;
+  clicking outside the photo while windowed does nothing.
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
   (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
   slideshow without closing the viewer.
@@ -146,7 +147,8 @@ $env:RUST_LOG = "info"
 | Click outside the photo | Leave fullscreen for a photo-sized window (inert when windowed) |
 | Drag a window edge or corner | Resize the windowed view |
 | Top-right `×` (fullscreen) | Close |
-| Native title-bar buttons (windowed) | Minimize, maximize, or close |
+| Native title-bar buttons (windowed) | Minimize or close |
+| Native maximize button (windowed) | Return to fullscreen |
 
 ### Saving color fixes
 
