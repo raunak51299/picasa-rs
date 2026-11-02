@@ -29,9 +29,11 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   second copy.
 - **Persistent preferences** — the slideshow interval, desktop scrim opacity,
   and delete confirmation are read from `%APPDATA%\picasa-rs\config.toml`.
-- **Filmstrip and HUD** — a thumbnail strip and a compact control bar appear on
-  mouse movement and fade away when idle. Drag the filmstrip to scroll it, or
-  click a thumbnail to jump to that photo.
+- **Filmstrip and HUD** — a thumbnail strip stays pinned to the bottom of the
+  viewer, even while the compact control bar is hidden. The control bar appears
+  on real mouse movement, then fades after three seconds idle; small jitter does
+  not bring it back. Drag the filmstrip to scroll it, or click a thumbnail to
+  jump to that photo.
 - **Windowed mode** — clicking the dimmed desktop leaves fullscreen for a
   resizable window sized to the photo and centred on the monitor. It uses the
   native Windows title bar with minimize, maximize, and close, while the client

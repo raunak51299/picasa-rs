@@ -14,7 +14,8 @@ adds.
 - Borderless, transparent window with a dimmed desktop backdrop.
 - Opens a file or a folder, scans the folder, and navigates with `Left`/`Right`,
   `Home`/`End`, wrapping at either end.
-- Filmstrip thumbnails, auto-fading HUD, and a loading indicator.
+- Filmstrip thumbnails (always visible), a HUD that fades after three seconds
+  idle, and a loading indicator.
 - Cursor-anchored zoom, drag panning, 90-degree *view* rotation, and EXIF
   orientation for all eight orientation values.
 - Fit-to-screen and 1:1 toggles, double-click toggling, a zoom slider, and a

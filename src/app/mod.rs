@@ -38,7 +38,10 @@ const FULL_PREFETCH_RADIUS: usize = 3;
 const PHOTO_CACHE_RADIUS: usize = 4;
 const THUMB_RADIUS: usize = 16;
 const THUMB_CACHE_LIMIT: usize = 320;
-const HUD_IDLE: Duration = Duration::from_millis(1600);
+const HUD_IDLE: Duration = Duration::from_millis(3000);
+/// Physical pixels the pointer must travel to wake the idle HUD. Smaller
+/// jitter must not bring the control bar back.
+const HUD_WAKE_DISTANCE: f64 = 12.0;
 const PHOTO_FADE_SECONDS: f32 = 0.18;
 const HELP_DURATION: Duration = Duration::from_secs(7);
 const TOAST_DURATION: Duration = Duration::from_secs(6);
@@ -138,6 +141,9 @@ pub struct App {
     last_activity: Instant,
     last_frame: Instant,
     hud_alpha: f32,
+    /// Pointer position where the HUD was last kept awake. The HUD only
+    /// reappears once the pointer moves away from it by a visible amount.
+    hud_anchor: Option<PhysicalPosition<f64>>,
     ui_hovered: bool,
     /// True while the pointer is over a borderless-window resize edge.
     resize_hovered: bool,
@@ -236,6 +242,7 @@ impl App {
             last_activity: now,
             last_frame: now,
             hud_alpha: 1.0,
+            hud_anchor: None,
             ui_hovered: false,
             resize_hovered: false,
             scroll_filmstrip: true,
@@ -517,6 +524,23 @@ impl App {
         self.last_activity = Instant::now();
     }
 
+    /// True when the pointer moved far enough from `anchor` that the idle HUD
+    /// should fade back in. Without an anchor the first movement counts.
+    ///
+    /// Kept free of window types beyond the position so it can be tested
+    /// without a GPU or an event loop.
+    fn cursor_wakes_hud(
+        anchor: Option<PhysicalPosition<f64>>,
+        position: PhysicalPosition<f64>,
+    ) -> bool {
+        let Some(anchor) = anchor else {
+            return true;
+        };
+        let dx = position.x - anchor.x;
+        let dy = position.y - anchor.y;
+        dx * dx + dy * dy >= HUD_WAKE_DISTANCE * HUD_WAKE_DISTANCE
+    }
+
     fn show_toast(&mut self, text: impl AsRef<str>) {
         self.toast = Some(Toast {
             text: truncate(text.as_ref(), 150),
@@ -738,7 +762,11 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 log::debug!("cursor moved to {position:?}");
                 self.cursor = Some(position);
-                self.record_activity();
+                let hud_awake = self.last_activity.elapsed() < HUD_IDLE;
+                if hud_awake || Self::cursor_wakes_hud(self.hud_anchor, position) {
+                    self.record_activity();
+                    self.hud_anchor = Some(position);
+                }
 
                 if self.dragging {
                     if let Some(last) = self.drag_last {
@@ -993,5 +1021,49 @@ fn truncate(text: &str, max_chars: usize) -> String {
         let mut result: String = text.chars().take(max_chars.saturating_sub(1)).collect();
         result.push('…');
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{App, HUD_WAKE_DISTANCE};
+    use winit::dpi::PhysicalPosition;
+
+    fn at(x: f64, y: f64) -> PhysicalPosition<f64> {
+        PhysicalPosition::new(x, y)
+    }
+
+    #[test]
+    fn the_first_pointer_move_wakes_the_hud() {
+        assert!(App::cursor_wakes_hud(None, at(10.0, 20.0)));
+    }
+
+    #[test]
+    fn jitter_does_not_wake_the_hud() {
+        let anchor = at(500.0, 500.0);
+        assert!(!App::cursor_wakes_hud(Some(anchor), at(503.0, 500.0)));
+        assert!(!App::cursor_wakes_hud(Some(anchor), at(500.0, 507.0)));
+        assert!(!App::cursor_wakes_hud(Some(anchor), at(504.0, 505.0)));
+    }
+
+    #[test]
+    fn a_long_move_wakes_the_hud() {
+        let anchor = at(500.0, 500.0);
+        assert!(App::cursor_wakes_hud(Some(anchor), at(530.0, 500.0)));
+        assert!(App::cursor_wakes_hud(Some(anchor), at(500.0, 470.0)));
+        assert!(App::cursor_wakes_hud(Some(anchor), at(520.0, 520.0)));
+    }
+
+    #[test]
+    fn the_wake_threshold_is_inclusive() {
+        let anchor = at(0.0, 0.0);
+        assert!(App::cursor_wakes_hud(
+            Some(anchor),
+            at(HUD_WAKE_DISTANCE, 0.0)
+        ));
+        assert!(!App::cursor_wakes_hud(
+            Some(anchor),
+            at(HUD_WAKE_DISTANCE - 0.1, 0.0)
+        ));
     }
 }
