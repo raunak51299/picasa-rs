@@ -71,7 +71,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(photo_texture, photo_sampler, source_uv);
 
     var rgb = color.rgb * u.gains.rgb;
-    rgb = (rgb - vec3<f32>(0.5)) * u.adjust.y + vec3<f32>(0.5);
+    rgb = (rgb - vec3<f32>(0.214041)) * u.adjust.y + vec3<f32>(0.214041);
     rgb = rgb + vec3<f32>(u.adjust.x);
     rgb = pow(max(rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / max(u.adjust.z, 0.01)));
     color = vec4<f32>(rgb, color.a);

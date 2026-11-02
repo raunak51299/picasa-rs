@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use super::{App, PHOTO_CACHE_RADIUS, THUMB_CACHE_LIMIT};
+use super::{App, PHOTO_CACHE_BYTE_BUDGET, PHOTO_CACHE_RADIUS, THUMB_CACHE_LIMIT};
 
 impl App {
     pub(super) fn evict_photo_cache(&mut self) {
@@ -14,6 +14,23 @@ impl App {
             .collect();
         let limit = PHOTO_CACHE_RADIUS * 2 + 1;
         for path in eviction_targets(&entries, current, limit) {
+            self.photos.remove(&path);
+        }
+
+        // Large photos make the entry count a poor proxy for memory use, so
+        // also enforce a byte budget (the current photo is always kept).
+        let sized: Vec<(PathBuf, usize, u64)> = self
+            .photos
+            .iter()
+            .map(|(path, photo)| {
+                (
+                    path.clone(),
+                    self.nav.index_of(path).unwrap_or(usize::MAX),
+                    texture_bytes(photo.texture_width, photo.texture_height),
+                )
+            })
+            .collect();
+        for path in budget_targets(&sized, current, PHOTO_CACHE_BYTE_BUDGET) {
             self.photos.remove(&path);
         }
     }
@@ -30,6 +47,37 @@ impl App {
             self.thumbs.remove(&path);
         }
     }
+}
+
+/// Approximate GPU memory of an RGBA8 texture including its mip chain.
+fn texture_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 4 * 4 / 3
+}
+
+/// Paths to drop, furthest from `current` first, until the remaining entries
+/// fit in `budget` bytes. The entry at `current` is never dropped.
+fn budget_targets(entries: &[(PathBuf, usize, u64)], current: usize, budget: u64) -> Vec<PathBuf> {
+    let mut total: u64 = entries.iter().map(|(_, _, bytes)| bytes).sum();
+    if total <= budget {
+        return Vec::new();
+    }
+
+    let mut ranked: Vec<&(PathBuf, usize, u64)> = entries
+        .iter()
+        .filter(|(_, index, _)| *index != current)
+        .collect();
+    ranked
+        .sort_by_key(|(path, index, _)| (std::cmp::Reverse(index.abs_diff(current)), path.clone()));
+
+    let mut dropped = Vec::new();
+    for (path, _, bytes) in ranked {
+        if total <= budget {
+            break;
+        }
+        total -= bytes;
+        dropped.push(path.clone());
+    }
+    dropped
 }
 
 /// Return the cached paths to drop so at most `limit` entries remain, furthest
@@ -51,8 +99,23 @@ fn eviction_targets(entries: &[(PathBuf, usize)], current: usize, limit: usize) 
 
 #[cfg(test)]
 mod tests {
-    use super::eviction_targets;
+    use super::{budget_targets, eviction_targets};
     use std::path::PathBuf;
+
+    #[test]
+    fn byte_budget_drops_far_photos_but_never_the_current_one() {
+        let cached = vec![
+            (PathBuf::from("a.jpg"), 0, 400),
+            (PathBuf::from("b.jpg"), 1, 400),
+            (PathBuf::from("c.jpg"), 5, 400),
+        ];
+        assert_eq!(budget_targets(&cached, 0, 800), [PathBuf::from("c.jpg")]);
+        assert_eq!(
+            budget_targets(&cached, 0, 1),
+            [PathBuf::from("c.jpg"), PathBuf::from("b.jpg")]
+        );
+        assert!(budget_targets(&cached, 0, 1200).is_empty());
+    }
 
     fn entries(indices: &[usize]) -> Vec<(PathBuf, usize)> {
         indices

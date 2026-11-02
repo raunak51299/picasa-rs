@@ -18,7 +18,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::{ModifiersState, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
 use crate::adjust::Adjustments;
@@ -36,6 +36,8 @@ use self::slideshow::Slideshow;
 
 const FULL_PREFETCH_RADIUS: usize = 3;
 const PHOTO_CACHE_RADIUS: usize = 4;
+/// Upper bound on cached photo textures (about 1 GiB of GPU memory).
+const PHOTO_CACHE_BYTE_BUDGET: u64 = 1 << 30;
 const THUMB_RADIUS: usize = 16;
 const THUMB_CACHE_LIMIT: usize = 320;
 const HUD_IDLE: Duration = Duration::from_millis(3000);
@@ -68,6 +70,26 @@ pub enum UserEvent {
     Focus,
     /// Another launch asked this viewer to open a file or directory.
     OpenPath(PathBuf),
+    /// A background save, rotation or copy finished.
+    JobDone,
+}
+
+/// Result of slow file work that ran on a worker thread.
+pub(crate) enum JobResult {
+    Saved {
+        name: String,
+        result: Result<crate::save::SavedFile>,
+    },
+    Rotated {
+        path: PathBuf,
+        name: String,
+        result: Result<u16>,
+    },
+    Copied {
+        path: PathBuf,
+        name: String,
+        result: Result<()>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -171,6 +193,56 @@ pub struct App {
     quit_requested: bool,
     startup_photo_ready: bool,
     startup_photo_presented: bool,
+    proxy: EventLoopProxy<UserEvent>,
+    jobs_tx: std::sync::mpsc::Sender<JobResult>,
+    jobs_rx: std::sync::mpsc::Receiver<JobResult>,
+    jobs_running: usize,
+}
+
+/// Letter shortcuts follow the character the user's layout produces (so R is
+/// R on AZERTY or Dvorak); everything else uses the physical key.
+fn shortcut_code(logical: &Key, physical: PhysicalKey) -> Option<KeyCode> {
+    if let Key::Character(text) = logical {
+        let mut chars = text.chars();
+        if let (Some(letter), None) = (chars.next(), chars.next()) {
+            let code = match letter.to_ascii_lowercase() {
+                'a' => Some(KeyCode::KeyA),
+                'b' => Some(KeyCode::KeyB),
+                'c' => Some(KeyCode::KeyC),
+                'd' => Some(KeyCode::KeyD),
+                'e' => Some(KeyCode::KeyE),
+                'f' => Some(KeyCode::KeyF),
+                'g' => Some(KeyCode::KeyG),
+                'h' => Some(KeyCode::KeyH),
+                'i' => Some(KeyCode::KeyI),
+                'j' => Some(KeyCode::KeyJ),
+                'k' => Some(KeyCode::KeyK),
+                'l' => Some(KeyCode::KeyL),
+                'm' => Some(KeyCode::KeyM),
+                'n' => Some(KeyCode::KeyN),
+                'o' => Some(KeyCode::KeyO),
+                'p' => Some(KeyCode::KeyP),
+                'q' => Some(KeyCode::KeyQ),
+                'r' => Some(KeyCode::KeyR),
+                's' => Some(KeyCode::KeyS),
+                't' => Some(KeyCode::KeyT),
+                'u' => Some(KeyCode::KeyU),
+                'v' => Some(KeyCode::KeyV),
+                'w' => Some(KeyCode::KeyW),
+                'x' => Some(KeyCode::KeyX),
+                'y' => Some(KeyCode::KeyY),
+                'z' => Some(KeyCode::KeyZ),
+                _ => None,
+            };
+            if code.is_some() {
+                return code;
+            }
+        }
+    }
+    match physical {
+        PhysicalKey::Code(code) => Some(code),
+        PhysicalKey::Unidentified(_) => None,
+    }
 }
 
 impl App {
@@ -203,6 +275,7 @@ impl App {
         // parallel hides most of that latency. 8192 is a safe initial texture
         // limit and is replaced with the real GPU limit once it is known.
         let loader = Loader::new(proxy.clone(), 8192);
+        let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
         loader.set_current(nav.current());
         let first_path = nav
             .current_path()
@@ -267,6 +340,10 @@ impl App {
             quit_requested: false,
             startup_photo_ready: false,
             startup_photo_presented: false,
+            proxy,
+            jobs_tx,
+            jobs_rx,
+            jobs_running: 0,
         })
     }
 
@@ -488,11 +565,24 @@ impl App {
         }
         let nav = Navigation::new(&target)?;
 
+        // Opening another photo from the same folder keeps decoded textures and
+        // thumbnails; only the listing is refreshed and failures are retried.
+        let same_folder = self
+            .nav
+            .current_path()
+            .and_then(Path::parent)
+            .is_some_and(|folder| Some(folder) == target.parent());
+
         self.nav = nav;
-        self.photos.clear();
-        self.thumbs.clear();
-        self.failed_full.clear();
-        self.failed_thumb.clear();
+        if same_folder {
+            self.failed_full.clear();
+            self.failed_thumb.clear();
+        } else {
+            self.photos.clear();
+            self.thumbs.clear();
+            self.failed_full.clear();
+            self.failed_thumb.clear();
+        }
         self.reload_full.clear();
         self.reload_thumb.clear();
         self.failed_animation.clear();
@@ -546,6 +636,58 @@ impl App {
             text: truncate(text.as_ref(), 150),
             until: Instant::now() + TOAST_DURATION,
         });
+    }
+
+    /// Refresh the folder listing so files added or removed outside the viewer
+    /// appear, keeping the current photo selected.
+    fn rescan_folder(&mut self) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
+            return;
+        };
+        match crate::viewer::navigation::Navigation::new(&path) {
+            Ok(nav) => {
+                self.nav = nav;
+                self.show_toast("Folder refreshed");
+            }
+            Err(error) => self.show_toast(format!("Could not refresh the folder: {error:#}")),
+        }
+    }
+
+    /// True (with a toast) while a background save, rotation or copy runs.
+    fn jobs_busy(&mut self) -> bool {
+        if self.jobs_running > 0 {
+            self.show_toast("Another operation is still running");
+            return true;
+        }
+        false
+    }
+
+    /// Run slow file work off the UI thread; the result comes back through
+    /// `UserEvent::JobDone`.
+    fn spawn_job(&mut self, job: impl FnOnce() -> JobResult + Send + 'static) {
+        self.jobs_running += 1;
+        let sender = self.jobs_tx.clone();
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(job());
+            let _ = proxy.send_event(UserEvent::JobDone);
+        });
+    }
+
+    fn drain_jobs(&mut self) {
+        while let Ok(result) = self.jobs_rx.try_recv() {
+            self.jobs_running = self.jobs_running.saturating_sub(1);
+            match result {
+                JobResult::Saved { name, result } => self.finish_save(name, result),
+                JobResult::Rotated { path, name, result } => {
+                    self.finish_rotation(path, name, result)
+                }
+                JobResult::Copied { path, name, result } => self.finish_copy(path, name, result),
+            }
+        }
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 
     fn focus_window(&self) {
@@ -868,7 +1010,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed
                     && !response.consumed
-                    && let PhysicalKey::Code(code) = event.physical_key
+                    && let Some(code) = shortcut_code(&event.logical_key, event.physical_key)
                 {
                     self.handle_key(event_loop, code, event.repeat);
                 }
@@ -924,6 +1066,7 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             UserEvent::LoaderReady => self.drain_loader_events(),
             UserEvent::Focus => self.focus_window(),
+            UserEvent::JobDone => self.drain_jobs(),
             UserEvent::OpenPath(path) => {
                 if let Err(error) = self.open_path(&path) {
                     let message = format!("{error:#}");
@@ -956,9 +1099,19 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if self.slideshow.as_ref().is_some_and(|show| show.is_due(now)) {
-            self.navigate_by(1);
-            if let Some(show) = &mut self.slideshow {
-                show.defer(Instant::now());
+            if self.pending_delete.is_some()
+                || self.pending_save.is_some()
+                || self.pending_rotation.is_some()
+            {
+                // Don't advance behind an open confirmation dialog.
+                if let Some(show) = &mut self.slideshow {
+                    show.defer(now);
+                }
+            } else {
+                self.navigate_by(1);
+                if let Some(show) = &mut self.slideshow {
+                    show.defer(Instant::now());
+                }
             }
         }
 
@@ -1041,8 +1194,32 @@ fn truncate(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, HUD_WAKE_DISTANCE};
+    use super::{App, HUD_WAKE_DISTANCE, shortcut_code};
     use winit::dpi::PhysicalPosition;
+    use winit::keyboard::{Key, KeyCode, NativeKeyCode, PhysicalKey};
+
+    #[test]
+    fn letter_shortcuts_follow_the_layout_not_the_key_position() {
+        // On AZERTY the physical Q position produces "a".
+        let azerty_a = Key::Character("a".into());
+        assert_eq!(
+            shortcut_code(&azerty_a, PhysicalKey::Code(KeyCode::KeyQ)),
+            Some(KeyCode::KeyA)
+        );
+        // Non-Latin layouts fall back to the physical key.
+        let cyrillic = Key::Character("к".into());
+        assert_eq!(
+            shortcut_code(&cyrillic, PhysicalKey::Code(KeyCode::KeyR)),
+            Some(KeyCode::KeyR)
+        );
+        assert_eq!(
+            shortcut_code(
+                &Key::Unidentified(NativeKeyCode::Unidentified.into()),
+                PhysicalKey::Unidentified(NativeKeyCode::Unidentified)
+            ),
+            None
+        );
+    }
 
     fn at(x: f64, y: f64) -> PhysicalPosition<f64> {
         PhysicalPosition::new(x, y)

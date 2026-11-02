@@ -45,6 +45,9 @@ pub fn save_adjusted(path: &Path, adjustments: Adjustments, mode: SaveMode) -> R
     }
 
     let original = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    if is_animated(&original, format) {
+        bail!("saving color fixes would flatten this animation to one frame");
+    }
     let decoded = image::load_from_memory_with_format(&original, format)
         .with_context(|| format!("could not decode {}", path.display()))?;
     let mut rgba = decoded.to_rgba8();
@@ -53,7 +56,11 @@ pub fn save_adjusted(path: &Path, adjustments: Adjustments, mode: SaveMode) -> R
         // JPEG pixels stay in their raw orientation; the EXIF orientation tag
         // is copied below and every decoder applies it on load.
         apply_to_rgba(rgba.as_mut(), adjustments);
-        let encoded = encode_jpeg(&rgba)?;
+        let mut encoded = encode_jpeg(&rgba)?;
+        let icc = rotate::icc_segments(&original);
+        if !icc.is_empty() {
+            encoded = rotate::insert_segments_after_soi(&encoded, &icc)?;
+        }
         match rotate::exif_app1(&original) {
             Some(app1) => rotate::insert_exif_segment(&encoded, &app1)?,
             None => encoded,
@@ -130,6 +137,19 @@ fn format_for(path: &Path) -> Option<ImageFormat> {
         "bmp" => Some(ImageFormat::Bmp),
         "gif" => Some(ImageFormat::Gif),
         _ => None,
+    }
+}
+
+/// Animated WebP and APNG files would be flattened to their first frame.
+fn is_animated(data: &[u8], format: ImageFormat) -> bool {
+    match format {
+        ImageFormat::WebP => data.len() > 21 && &data[12..16] == b"VP8X" && data[20] & 0x02 != 0,
+        ImageFormat::Png => {
+            let control = data.windows(4).position(|window| window == b"acTL");
+            let first_data = data.windows(4).position(|window| window == b"IDAT");
+            matches!((control, first_data), (Some(control), Some(first)) if control < first)
+        }
+        _ => false,
     }
 }
 
@@ -245,6 +265,37 @@ mod tests {
         );
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn jpeg_save_keeps_the_icc_profile() {
+        let directory = temp_dir("icc");
+        let path = directory.join("icc.jpg");
+        let mut payload = b"ICC_PROFILE\0\x01\x01".to_vec();
+        payload.extend_from_slice(&[7u8; 20]);
+        let mut segment = vec![0xFF, 0xE2];
+        segment.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        segment.extend_from_slice(&payload);
+        let source =
+            rotate::insert_segments_after_soi(&sample_jpeg(1), &[segment.clone()]).unwrap();
+        fs::write(&path, source).unwrap();
+
+        save_adjusted(&path, Adjustments::lighten(), SaveMode::Overwrite).unwrap();
+        assert_eq!(
+            rotate::icc_segments(&fs::read(&path).unwrap()),
+            vec![segment]
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn animated_webp_is_detected() {
+        let mut webp = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0".to_vec();
+        webp.extend_from_slice(&[0x02, 0, 0, 0]);
+        assert!(is_animated(&webp, ImageFormat::WebP));
+        webp[20] = 0;
+        assert!(!is_animated(&webp, ImageFormat::WebP));
     }
 
     #[test]

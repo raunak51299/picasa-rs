@@ -22,18 +22,21 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, OPEN_EXISTING, PIPE_ACCESS_INBOUND, ReadFile, WriteFile,
 };
+use windows_sys::Win32::System::IO::CancelIoEx;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT, WaitNamedPipeW,
 };
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
+use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::UserEvent;
 
 const MUTEX_NAME: &str = r"Local\picasa-rs-single-instance";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_BODY: usize = 128 * 1024;
 const KIND_FOCUS: u8 = 0;
 const KIND_OPEN: u8 = 1;
@@ -172,7 +175,7 @@ fn serve(name: &str, mut deliver: impl FnMut(Request) -> bool) {
             continue;
         }
 
-        let request = read_request(handle);
+        let request = read_request_with_timeout(handle);
         // SAFETY: `handle` is a connected pipe server owned here.
         unsafe {
             DisconnectNamedPipe(handle);
@@ -195,6 +198,12 @@ fn forward_to(name: &str, request: &Request) -> Result<()> {
     let frame = encode(request)?;
     let name = wide(name);
     let deadline = Instant::now() + CONNECT_TIMEOUT;
+
+    // The new process was just launched by the user and may bring the running
+    // viewer to the foreground; without this Windows only flashes its taskbar
+    // button. ASFW_ANY is u32::MAX.
+    // SAFETY: plain Win32 call with no pointers.
+    unsafe { AllowSetForegroundWindow(u32::MAX) };
 
     loop {
         // SAFETY: the name is a valid null-terminated UTF-16 string and the
@@ -235,6 +244,27 @@ fn forward_to(name: &str, request: &Request) -> Result<()> {
 
 fn is_retryable(error: u32) -> bool {
     error == ERROR_FILE_NOT_FOUND || error == ERROR_PIPE_BUSY
+}
+
+/// Read a request, cancelling the read if the client connects and stalls so
+/// the listener cannot be blocked forever.
+fn read_request_with_timeout(handle: HANDLE) -> io::Result<Option<Request>> {
+    let (done, waiting) = std::sync::mpsc::channel::<()>();
+    let raw = handle as usize;
+    let watchdog = thread::spawn(move || {
+        if waiting
+            .recv_timeout(READ_TIMEOUT)
+            .is_err_and(|error| error == std::sync::mpsc::RecvTimeoutError::Timeout)
+        {
+            // SAFETY: the owner joins this thread before closing the handle,
+            // so `raw` is still a valid pipe handle here.
+            unsafe { CancelIoEx(raw as HANDLE, std::ptr::null()) };
+        }
+    });
+    let request = read_request(handle);
+    drop(done);
+    let _ = watchdog.join();
+    request
 }
 
 fn read_request(handle: HANDLE) -> io::Result<Option<Request>> {

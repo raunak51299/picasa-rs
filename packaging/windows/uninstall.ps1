@@ -49,14 +49,31 @@ foreach ($extension in $Extensions) {
         continue
     }
 
-    $properties = Get-ItemProperty -Path $extKey -ErrorAction SilentlyContinue
-    if ($null -ne $properties -and $properties.'(default)' -eq $progId) {
-        Remove-ItemProperty -Path $extKey -Name '(default)' -ErrorAction SilentlyContinue
+    $properties = Get-Item -Path $extKey -ErrorAction SilentlyContinue
+    if ($null -ne $properties -and $properties.GetValue('') -eq $progId) {
+        # Remove-ItemProperty cannot delete the unnamed default value.
+        $writable = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey(
+            "Software\Classes\$extension", $true)
+        $writable.DeleteValue('', $false)
+        $writable.Close()
     }
 
     $openWithKey = Join-Path $extKey 'OpenWithProgids'
     if (Test-Path -Path $openWithKey) {
         Remove-ItemProperty -Path $openWithKey -Name $progId -ErrorAction SilentlyContinue
+        $openWith = Get-Item -Path $openWithKey
+        if ($openWith.ValueCount -eq 0 -and $openWith.SubKeyCount -eq 0) {
+            Remove-Item -Path $openWithKey -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Remove-Item -Path (Join-Path "HKCU:\Software\Classes\SystemFileAssociations\$extension\shell" 'PicasaRs') `
+        -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Drop the extension key if nothing else is left in it.
+    $remaining = Get-Item -Path $extKey -ErrorAction SilentlyContinue
+    if ($null -ne $remaining -and $remaining.ValueCount -eq 0 -and $remaining.SubKeyCount -eq 0) {
+        Remove-Item -Path $extKey -Force -ErrorAction SilentlyContinue
     }
 }
 

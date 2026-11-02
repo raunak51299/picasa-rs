@@ -81,8 +81,20 @@ impl Preferences {
                 )
             })?;
         }
-        fs::write(path, self.to_toml())
-            .with_context(|| format!("could not write preferences to {}", path.display()))
+        let Some(parent) = path.parent() else {
+            return fs::write(path, self.to_toml())
+                .with_context(|| format!("could not write preferences to {}", path.display()));
+        };
+        // Write beside the target and rename so a crash never leaves a
+        // truncated config file behind.
+        let temporary = parent.join("config.toml.tmp");
+        fs::write(&temporary, self.to_toml())
+            .with_context(|| format!("could not write preferences to {}", temporary.display()))?;
+        fs::rename(&temporary, path).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            anyhow::Error::new(error)
+                .context(format!("could not write preferences to {}", path.display()))
+        })
     }
 
     pub fn parse(text: &str) -> Result<Self> {

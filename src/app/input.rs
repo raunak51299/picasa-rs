@@ -17,7 +17,8 @@ use crate::viewer::camera::Vec2;
 
 use super::slideshow::{Slideshow, stepped_interval};
 use super::{
-    App, HELP_DURATION, RotationRequest, SaveRequest, TOAST_DURATION, Toast, UiAction, truncate,
+    App, HELP_DURATION, JobResult, RotationRequest, SaveRequest, TOAST_DURATION, Toast, UiAction,
+    truncate,
 };
 
 impl App {
@@ -204,6 +205,7 @@ impl App {
             }
             KeyCode::F5 => {
                 if !repeat {
+                    self.rescan_folder();
                     self.failed_full.clear();
                     self.failed_thumb.clear();
                     self.failed_animation.clear();
@@ -254,7 +256,7 @@ impl App {
             self.slideshow = Some(Slideshow::new(self.slideshow_interval));
             self.toast = Some(Toast {
                 text: format!(
-                    "Slideshow every {} s — Space pauses, Esc stops",
+                    "Slideshow every {} s â€” Space pauses, Esc stops",
                     self.slideshow_interval.as_secs()
                 ),
                 until: Instant::now() + TOAST_DURATION,
@@ -406,14 +408,24 @@ impl App {
     }
 
     fn save_now(&mut self, request: SaveRequest, mode: SaveMode) {
+        if self.jobs_busy() {
+            return;
+        }
         let name = request
             .path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        self.show_toast(format!("Saving {name}â€¦"));
+        self.spawn_job(move || JobResult::Saved {
+            name,
+            result: save::save_adjusted(&request.path, request.adjustments, mode),
+        });
+    }
 
-        match save::save_adjusted(&request.path, request.adjustments, mode) {
+    pub(super) fn finish_save(&mut self, name: String, result: anyhow::Result<save::SavedFile>) {
+        match result {
             Ok(saved) => {
                 let saved_name = saved
                     .path
@@ -463,7 +475,19 @@ impl App {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        match share::copy_image(&path, self.adjustments) {
+        if self.jobs_busy() {
+            return;
+        }
+        let adjustments = self.adjustments;
+        self.spawn_job(move || JobResult::Copied {
+            result: share::copy_image(&path, adjustments),
+            path,
+            name,
+        });
+    }
+
+    pub(super) fn finish_copy(&mut self, path: PathBuf, name: String, result: anyhow::Result<()>) {
+        match result {
             Ok(()) => {
                 self.toast = Some(Toast {
                     text: format!("Copied {name} to the clipboard"),
@@ -591,6 +615,9 @@ impl App {
     }
 
     fn confirm_rotation(&mut self) {
+        if self.jobs_busy() {
+            return;
+        }
         let Some(request) = self.pending_rotation.take() else {
             return;
         };
@@ -601,16 +628,29 @@ impl App {
             .to_string_lossy()
             .to_string();
 
-        match rotate::rotate_file(&request.path, request.clockwise) {
+        self.spawn_job(move || JobResult::Rotated {
+            result: rotate::rotate_file(&request.path, request.clockwise),
+            path: request.path,
+            name,
+        });
+    }
+
+    pub(super) fn finish_rotation(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        result: anyhow::Result<u16>,
+    ) {
+        match result {
             Ok(orientation) => {
-                self.invalidate_path(&request.path);
+                self.invalidate_path(&path);
                 self.toast = Some(Toast {
                     text: format!("Rotated {name}"),
                     until: Instant::now() + TOAST_DURATION,
                 });
                 log::info!(
                     "rotated {} to EXIF orientation {orientation}",
-                    request.path.display()
+                    path.display()
                 );
                 self.camera.clear_image();
                 self.on_current_changed();

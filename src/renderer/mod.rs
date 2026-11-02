@@ -146,11 +146,13 @@ impl Renderer {
             anyhow::bail!("the window surface has no supported texture formats");
         }
 
+        // Prefer a non-sRGB surface: egui expects gamma-space output, and the
+        // photo shader encodes gamma itself when the target is not sRGB.
         let format = capabilities
             .formats
             .iter()
             .copied()
-            .find(|format| format.is_srgb())
+            .find(|format| !format.is_srgb())
             .unwrap_or(capabilities.formats[0]);
 
         let mut config = surface

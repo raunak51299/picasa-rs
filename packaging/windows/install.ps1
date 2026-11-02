@@ -75,6 +75,11 @@ $sourceExe = Resolve-PicasaExe -Requested $ExePath
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 $targetExe = Join-Path $InstallDir $appExe
+$running = Get-Process -Name 'picasa-rs' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $targetExe }
+if ($running) {
+    throw "picasa-rs is running from $targetExe. Close it and run the installer again."
+}
 Copy-Item -LiteralPath $sourceExe -Destination $targetExe -Force
 
 $iconSource = Join-Path $PSScriptRoot 'picasa-rs.ico'
@@ -110,7 +115,12 @@ foreach ($extension in $Extensions) {
     $extKey = Join-Path $classes $extension
 
     New-Item -Path $extKey -Force | Out-Null
-    Set-Item -Path $extKey -Value $progId
+    # Only claim the class default when nothing else owns it; overwriting an
+    # existing default would change the file's perceived type and thumbnails.
+    $existingDefault = (Get-Item -Path $extKey).GetValue('')
+    if ([string]::IsNullOrEmpty($existingDefault)) {
+        Set-Item -Path $extKey -Value $progId
+    }
     New-Item -Path (Join-Path $extKey 'OpenWithProgids') -Force | Out-Null
     New-ItemProperty -Path (Join-Path $extKey 'OpenWithProgids') `
         -Name $progId -Value '' -PropertyType String -Force | Out-Null
@@ -181,9 +191,14 @@ function Add-ShellVerb {
     Set-Item -Path (Join-Path $Key 'command') -Value $Command
 }
 
-Add-ShellVerb -Key 'HKCU:\Software\Classes\SystemFileAssociations\image\shell\PicasaRs' `
-    -Command $openCommand
-Add-ShellVerb -Key 'HKCU:\Software\Classes\Directory\shell\PicasaRs' `
+foreach ($extension in $Extensions) {
+    if (-not $extension.StartsWith('.')) {
+        $extension = ".$extension"
+    }
+    Add-ShellVerb `
+        -Key "HKCU:\Software\Classes\SystemFileAssociations\$($extension.ToLowerInvariant())\shell\PicasaRs" `
+        -Command $openCommand
+}Add-ShellVerb -Key 'HKCU:\Software\Classes\Directory\shell\PicasaRs' `
     -Command $openCommand
 Add-ShellVerb -Key 'HKCU:\Software\Classes\Directory\Background\shell\PicasaRs' `
     -Command "`"$targetExe`" `"%V`""

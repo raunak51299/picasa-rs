@@ -12,14 +12,20 @@ pub fn move_to_recycle_bin(path: &Path) -> Result<()> {
     {
         use windows_sys::Win32::UI::Shell::{
             FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
-            SHFILEOPSTRUCTW, SHFileOperationW,
+            FOF_WANTNUKEWARNING, SHFILEOPSTRUCTW, SHFileOperationW,
         };
 
         let from = wide_path(path)?;
         let mut operation = SHFILEOPSTRUCTW {
             wFunc: FO_DELETE,
             pFrom: from.as_ptr(),
-            fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16,
+            // FOF_WANTNUKEWARNING makes the shell ask before permanently deleting
+            // files that cannot go to the Recycle Bin (network or removable drives).
+            fFlags: (FOF_ALLOWUNDO
+                | FOF_NOCONFIRMATION
+                | FOF_SILENT
+                | FOF_NOERRORUI
+                | FOF_WANTNUKEWARNING) as u16,
             ..Default::default()
         };
 

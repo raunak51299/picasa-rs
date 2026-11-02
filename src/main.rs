@@ -40,7 +40,63 @@ pub(crate) fn startup_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        report_fatal_error(&error);
+        std::process::exit(1);
+    }
+}
+
+/// The release build has no console, so surface fatal errors in a dialog.
+fn report_fatal_error(error: &anyhow::Error) {
+    let message = format!("{error:#}");
+    log::error!("{message}");
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MessageBoxW,
+        };
+        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        let title: Vec<u16> = "picasa-rs".encode_utf16().chain(Some(0)).collect();
+        // SAFETY: both buffers are live, NUL-terminated UTF-16 strings.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+            );
+        }
+    }
+}
+
+/// Make `println!` reach the parent console when started from a terminal.
+/// Redirected handles are left alone.
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_parent_console() {
+    use std::os::windows::io::IntoRawHandle;
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        SetStdHandle,
+    };
+
+    // SAFETY: plain Win32 console calls; opened handles are intentionally
+    // leaked because they must stay valid for the life of the process.
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return;
+        }
+        for kind in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            if GetStdHandle(kind).is_null() {
+                if let Ok(console) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+                    SetStdHandle(kind, console.into_raw_handle() as _);
+                }
+            }
+        }
+    }
+}
+
+fn run() -> Result<()> {
     PROCESS_START.set(Instant::now()).ok();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn,picasa_rs=info"),
@@ -52,6 +108,8 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        #[cfg(all(windows, not(debug_assertions)))]
+        attach_parent_console();
         print_help();
         return Ok(());
     }
@@ -142,6 +200,7 @@ CONTROLS:
     Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
     Shift + R / L       rotate the view only
     H                   show help
+    F5                  refresh the folder listing and retry failed images
     Esc                 stop slideshow, or close
     Q                   close
 

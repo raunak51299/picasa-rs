@@ -95,6 +95,10 @@ impl Adjustments {
     }
 }
 
+/// Linear-light value of sRGB mid-grey (0.5); contrast pivots around it. Keep
+/// in sync with `photo.wgsl`.
+const CONTRAST_PIVOT: f32 = 0.214_041;
+
 /// Apply adjustments to an sRGB RGBA8 buffer. This mirrors `photo.wgsl`, which
 /// receives linear values because the photo texture uses an sRGB format.
 pub fn apply_to_rgba(rgba: &mut [u8], adjustments: Adjustments) {
@@ -102,21 +106,26 @@ pub fn apply_to_rgba(rgba: &mut [u8], adjustments: Adjustments) {
         return;
     }
     let (adjust, gains) = adjustments.uniforms();
-    rgba.par_chunks_mut(4).for_each(|pixel| {
-        let red = srgb_to_linear(pixel[0] as f32 / 255.0) * gains[0];
-        let green = srgb_to_linear(pixel[1] as f32 / 255.0) * gains[1];
-        let blue = srgb_to_linear(pixel[2] as f32 / 255.0) * gains[2];
 
-        let map = |value: f32| {
-            let value = (value - 0.5) * adjust[1] + 0.5;
+    // Every channel is mapped independently from an 8-bit input, so a table
+    // per channel replaces three `powf` calls per pixel.
+    let build = |gain: f32| -> [u8; 256] {
+        let mut table = [0u8; 256];
+        for (input, output) in table.iter_mut().enumerate() {
+            let value = srgb_to_linear(input as f32 / 255.0) * gain;
+            let value = (value - CONTRAST_PIVOT) * adjust[1] + CONTRAST_PIVOT;
             let value = value + adjust[0];
             let value = value.max(0.0).powf(1.0 / adjust[2].max(0.01));
-            linear_to_srgb(value.clamp(0.0, 1.0))
-        };
+            *output = (linear_to_srgb(value.clamp(0.0, 1.0)) * 255.0).round() as u8;
+        }
+        table
+    };
+    let tables = [build(gains[0]), build(gains[1]), build(gains[2])];
 
-        pixel[0] = (map(red) * 255.0).round() as u8;
-        pixel[1] = (map(green) * 255.0).round() as u8;
-        pixel[2] = (map(blue) * 255.0).round() as u8;
+    rgba.par_chunks_mut(4).for_each(|pixel| {
+        pixel[0] = tables[0][pixel[0] as usize];
+        pixel[1] = tables[1][pixel[1] as usize];
+        pixel[2] = tables[2][pixel[2] as usize];
     });
 }
 
@@ -180,7 +189,8 @@ mod tests {
         apply_to_rgba(&mut rgba, extreme);
         assert_eq!(rgba[0], 0);
         assert_eq!(rgba[1], 255);
-        assert_eq!(rgba[2], 0);
+        // Mid-grey sits on the contrast pivot, so only brightness moves it.
+        assert_eq!(rgba[2], 255);
         assert_eq!(rgba[3], 255);
     }
 
