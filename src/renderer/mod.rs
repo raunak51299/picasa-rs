@@ -118,7 +118,10 @@ impl Renderer {
         );
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
+            // The Intel iGPU DX12 driver intermittently corrupts the font
+            // atlas (stray solid boxes under glyph descenders); a discrete GPU
+            // renders it correctly. Without one this still picks the iGPU.
+            power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
             ..Default::default()
