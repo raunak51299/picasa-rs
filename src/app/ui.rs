@@ -276,9 +276,11 @@ impl App {
                 });
         }
 
-        if !self.nav.is_empty() {
-            // The filmstrip is always visible, even while the control bar is
-            // faded out, so it is drawn at full opacity.
+        // The filmstrip shares the control bar's fade so both disappear
+        // together after the pointer goes idle.
+        let filmstrip_alpha = self.hud_alpha;
+        if !self.nav.is_empty() && filmstrip_alpha > 0.01 {
+            let alpha = filmstrip_alpha;
             let mut scroll_to_current = self.scroll_filmstrip;
             let start = current_index.saturating_sub(THUMB_RADIUS);
             let end = (current_index + THUMB_RADIUS + 1).min(self.nav.len());
@@ -289,11 +291,15 @@ impl App {
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha(180))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(18)))
+                        .fill(egui::Color32::from_black_alpha((180.0 * alpha) as u8))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_white_alpha((18.0 * alpha) as u8),
+                        ))
                         .corner_radius(egui::CornerRadius::same(16))
                         .inner_margin(egui::Margin::symmetric(9, 7))
                         .show(ui, |ui| {
+                            ui.set_opacity(alpha);
                             ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                             egui::ScrollArea::horizontal()
                                 .id_salt("filmstrip_scroll")
