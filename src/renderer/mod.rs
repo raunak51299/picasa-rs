@@ -66,6 +66,10 @@ pub struct Renderer {
     /// Created lazily so the first photo can be presented before egui's
     /// shader pipeline and font atlas are ready.
     egui_renderer: Option<EguiRenderer>,
+    /// True while the window has no drawable client area, such as when it is
+    /// minimized. The surface keeps its last valid configuration and frames
+    /// are skipped until a real size returns.
+    suspended: bool,
 }
 
 impl Renderer {
@@ -217,6 +221,7 @@ impl Renderer {
             quad,
             mipmaps,
             egui_renderer: None,
+            suspended: false,
         })
     }
 
@@ -247,13 +252,20 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
-        let width = size.width.max(1);
-        let height = size.height.max(1);
-        if width == self.config.width && height == self.config.height {
+        if !has_drawable_area(size) {
+            // A minimized window reports a zero-sized client area. Keep the
+            // surface at its last valid size and skip frames; reconfiguring
+            // at the 1x1 clamp would make the next scissor, which is built
+            // for the previous frame size, invalid.
+            self.suspended = true;
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
+        self.suspended = false;
+        if size.width == self.config.width && size.height == self.config.height {
+            return;
+        }
+        self.config.width = size.width;
+        self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
     }
 
@@ -402,6 +414,10 @@ impl Renderer {
             textures_delta.free.clear();
         }
 
+        if self.suspended {
+            return Ok(());
+        }
+
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -541,5 +557,32 @@ impl Renderer {
         self.queue.present(surface_texture);
 
         Ok(())
+    }
+}
+
+/// True when a client area is large enough to hold a frame. A minimized
+/// window reports zero (or, through the 1x1 clamp, one) pixels per side.
+fn has_drawable_area(size: PhysicalSize<u32>) -> bool {
+    size.width > 1 && size.height > 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_drawable_area;
+    use winit::dpi::PhysicalSize;
+
+    #[test]
+    fn a_minimized_window_has_no_drawable_area() {
+        assert!(!has_drawable_area(PhysicalSize::new(0, 0)));
+        assert!(!has_drawable_area(PhysicalSize::new(0, 1080)));
+        assert!(!has_drawable_area(PhysicalSize::new(1920, 0)));
+        assert!(!has_drawable_area(PhysicalSize::new(1, 1)));
+    }
+
+    #[test]
+    fn a_real_window_has_a_drawable_area() {
+        assert!(has_drawable_area(PhysicalSize::new(2, 2)));
+        assert!(has_drawable_area(PhysicalSize::new(800, 600)));
+        assert!(has_drawable_area(PhysicalSize::new(1920, 1080)));
     }
 }
