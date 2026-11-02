@@ -810,11 +810,22 @@ impl App {
         if window.fullscreen().is_some() {
             return;
         }
+        // Unmaximizing restores the decorated window for a moment. Windows
+        // leaves that restored frame behind as stale desktop pixels, and the
+        // transparent fullscreen window then reveals it as a ghost because
+        // DWM does not repaint the desktop underneath. Hide the window across
+        // the transition so the desktop repaints that area first.
+        let visible = window.is_visible().unwrap_or(true);
+        window.set_visible(false);
         // Drop the maximize first: winit saves the old placement when entering
         // fullscreen, and that placement has to describe the normal window so
         // leaving fullscreen restores it instead of a still-maximized one.
         window.set_maximized(false);
         window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+        if visible {
+            window.set_visible(true);
+            window.focus_window();
+        }
         self.record_activity();
         window.request_redraw();
     }
