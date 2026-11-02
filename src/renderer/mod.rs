@@ -463,14 +463,16 @@ impl Renderer {
             };
             self.quad.write_photo(&self.queue, &uniforms);
 
-            let expand = (draw.half_size[0].min(draw.half_size[1]) * 0.32).clamp(14.0, 34.0);
+            // A wide, low-alpha penumbra reads as a soft shadow rather than a
+            // dark halo around the photo.
+            let expand = (draw.half_size[0].min(draw.half_size[1]) * 0.55).clamp(28.0, 72.0);
             let shadow = ShadowUniforms {
-                center: [draw.center[0], draw.center[1] + 9.0],
+                center: [draw.center[0], draw.center[1] + 14.0],
                 half_size: draw.half_size,
                 angle: draw.angle,
                 expand,
-                alpha: 0.55 * draw.alpha,
-                radius: 8.0,
+                alpha: 0.38 * draw.alpha,
+                radius: 10.0,
                 screen_size: [
                     screen.size_in_pixels[0] as f32,
                     screen.size_in_pixels[1] as f32,

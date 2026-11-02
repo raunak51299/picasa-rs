@@ -55,7 +55,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let q = abs(in.local) - inner;
     let distance = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - u.radius;
 
-    let falloff = clamp((u.expand - distance) / max(u.expand, 0.001), 0.0, 1.0);
-    let alpha = falloff * falloff * u.alpha;
+    let t = clamp(distance / max(u.expand, 0.001), 0.0, 1.0);
+    let falloff = 1.0 - smoothstep(0.0, 1.0, t);
+    let alpha = falloff * u.alpha;
     return vec4<f32>(0.0, 0.0, 0.0, alpha);
 }
