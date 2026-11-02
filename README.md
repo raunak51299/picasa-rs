@@ -2,7 +2,8 @@
 
 A Picasa-inspired quick photo viewer for the desktop: a borderless, fullscreen
 overlay that dims the desktop behind the photo, opens quickly, and lets you
-scrub through a folder with the arrow keys.
+scrub through a folder with the arrow keys. Clicking the dimmed desktop drops
+into a borderless, photo-sized window.
 
 Built with Rust, [`winit`](https://crates.io/crates/winit),
 [`wgpu`](https://crates.io/crates/wgpu), and [`egui`](https://crates.io/crates/egui).
@@ -29,7 +30,13 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Persistent preferences** — the slideshow interval, desktop scrim opacity,
   and delete confirmation are read from `%APPDATA%\picasa-rs\config.toml`.
 - **Filmstrip and HUD** — a thumbnail strip and a compact control bar appear on
-  mouse movement and fade away when idle.
+  mouse movement and fade away when idle. Drag the filmstrip to scroll it, or
+  click a thumbnail to jump to that photo.
+- **Windowed mode** — clicking the dimmed desktop leaves fullscreen for a
+  borderless, resizable window sized to the photo and centred on the monitor.
+  Drag any edge or corner to resize it. The window stays transparent and keeps
+  the HUD, filmstrip, and a top-right close button; clicking outside the photo
+  while windowed does nothing.
 - **Slideshow** — `Space` or `S` plays the folder with a 2–30 second interval
   (`[` / `]`), fades each photo in, and wraps at the end. `Esc` stops the
   slideshow without closing the viewer.
@@ -115,7 +122,7 @@ $env:RUST_LOG = "info"
 | `Left` / `Right` | Previous / next image (wraps) |
 | `Home` / `End` | First / last image |
 | Mouse wheel | Zoom around the cursor |
-| Drag | Pan |
+| Drag | Pan (drag the filmstrip to scroll it) |
 | Drop a file or folder | Open it and rebuild the folder listing |
 | Double-click / `1` | Toggle fit and 1:1 |
 | `0` | Reset the view |
@@ -136,7 +143,9 @@ $env:RUST_LOG = "info"
 | `H` | Show the help hint |
 | `Esc` | Stop the slideshow, or close when it is not playing |
 | `Q` | Close |
-| Click outside the photo | Close |
+| Click outside the photo | Leave fullscreen for a photo-sized window (inert when windowed) |
+| Drag a window edge or corner | Resize the windowed view |
+| Top-right `×` | Close |
 
 ### Saving color fixes
 
@@ -172,7 +181,7 @@ confirm_delete = true
 
 ## Transparency on Windows
 
-The window is a borderless fullscreen `winit` window created with
+The window starts as a borderless fullscreen `winit` window created with
 `with_transparent(true)`. On Windows the renderer forces the DX12 backend and
 selects wgpu's DirectComposition presentation path
 (`wgpu::Dx12SwapchainKind::DxgiFromVisual`). Unlike a plain HWND swapchain,
@@ -184,10 +193,12 @@ supports `PreMultiplied` alpha. The renderer:
 3. lets DWM composite the result over the desktop.
 
 The result is true per-pixel transparency: the desktop is visible at 25% of its
-original brightness around the photo. Clicking in that dimmed area closes the
-viewer, matching Picasa's behavior. To change the dim level, edit
-`DIM_BACKDROP_ALPHA` in `src/renderer/mod.rs` (`0.0` is fully clear, `1.0` is
-fully opaque).
+original brightness around the photo. Clicking that dimmed area leaves
+fullscreen for a borderless, resizable window sized to the photo and centred on
+the monitor, where the same transparency is kept. A `×` button in the top-right
+corner closes the viewer, and clicking the dimmed area while windowed is inert.
+To change the dim level, edit `DIM_BACKDROP_ALPHA` in `src/renderer/mod.rs`
+(`0.0` is fully clear, `1.0` is fully opaque).
 
 Notes:
 
