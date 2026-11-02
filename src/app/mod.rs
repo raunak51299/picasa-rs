@@ -710,6 +710,15 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.camera
                     .set_viewport(size.width as f32, size.height as f32);
+                // Windows has no maximize event; detect the native maximize
+                // through the window state and present it as fullscreen.
+                let maximized = self
+                    .window
+                    .as_ref()
+                    .is_some_and(|window| window.is_maximized() && window.fullscreen().is_none());
+                if maximized {
+                    self.switch_to_fullscreen();
+                }
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }

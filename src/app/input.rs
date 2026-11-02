@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
-use winit::window::{CursorIcon, ResizeDirection};
+use winit::window::{CursorIcon, Fullscreen, ResizeDirection};
 
 use crate::delete;
 use crate::loader::JobKind;
@@ -797,6 +797,24 @@ impl App {
             window.set_outer_position(PhysicalPosition::new(x, y));
         }
 
+        self.record_activity();
+        window.request_redraw();
+    }
+
+    /// Present the window as borderless fullscreen. The native title bar's
+    /// maximize button would otherwise just grow the window.
+    pub(super) fn switch_to_fullscreen(&mut self) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        if window.fullscreen().is_some() {
+            return;
+        }
+        // Drop the maximize first: winit saves the old placement when entering
+        // fullscreen, and that placement has to describe the normal window so
+        // leaving fullscreen restores it instead of a still-maximized one.
+        window.set_maximized(false);
+        window.set_fullscreen(Some(Fullscreen::Borderless(None)));
         self.record_activity();
         window.request_redraw();
     }
