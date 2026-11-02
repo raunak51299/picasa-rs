@@ -769,11 +769,11 @@ impl App {
         width *= minimum_scale;
         height *= minimum_scale;
 
-        // Leave a little room for the window frame and the taskbar.
+        // Leave room for the native title bar and the taskbar.
         if let Some(monitor) = &monitor {
             let size = monitor.size();
-            let max_width = (size.width as f32 * 0.96).max(1.0);
-            let max_height = (size.height as f32 * 0.96).max(1.0);
+            let max_width = (size.width as f32 * 0.90).max(1.0);
+            let max_height = (size.height as f32 * 0.90).max(1.0);
             let fit = (max_width / width).min(max_height / height).min(1.0);
             width *= fit;
             height *= fit;
@@ -783,7 +783,9 @@ impl App {
         let height = height.round().max(1.0) as u32;
 
         window.set_fullscreen(None);
-        window.set_decorations(false);
+        // Windowed mode uses the native title bar so minimize, maximize, and
+        // close match Explorer.
+        window.set_decorations(true);
         window.set_resizable(true);
         let _ = window.request_inner_size(PhysicalSize::new(width, height));
 

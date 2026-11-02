@@ -16,6 +16,10 @@ impl App {
             return actions;
         };
         let current_index = self.nav.current();
+        let windowed = self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.fullscreen().is_none());
         let loading =
             self.current_photo().is_none() && !self.failed_full.contains_key(&current_path);
         let error = self.failed_full.get(&current_path).cloned();
@@ -231,7 +235,9 @@ impl App {
                                 if small_button(ui, "Delete").clicked() {
                                     actions.push(UiAction::Delete);
                                 }
-                                if small_button(ui, "X").clicked() {
+                                // Windowed mode uses the native title-bar
+                                // close button instead.
+                                if !windowed && small_button(ui, "X").clicked() {
                                     actions.push(UiAction::Close);
                                 }
                             });
@@ -239,31 +245,52 @@ impl App {
                 });
         }
 
-        let windowed = self
-            .window
-            .as_ref()
-            .is_some_and(|window| window.fullscreen().is_none());
-        let close_alpha = if windowed { 1.0 } else { self.hud_alpha };
-        if close_alpha > 0.01 {
+        let close_alpha = self.hud_alpha;
+        if !windowed && close_alpha > 0.01 {
             egui::Area::new(egui::Id::unique("viewer-close"))
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 18.0))
+                .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    let response = ui
-                        .add(
-                            egui::Button::new(egui::RichText::new("×").size(21.0).color(
-                                egui::Color32::from_white_alpha((235.0 * close_alpha) as u8),
-                            ))
-                            .fill(egui::Color32::from_black_alpha((150.0 * close_alpha) as u8))
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                egui::Color32::from_white_alpha((35.0 * close_alpha) as u8),
-                            ))
-                            .corner_radius(egui::CornerRadius::same(18))
-                            .min_size(egui::vec2(36.0, 36.0)),
-                        )
-                        .on_hover_text("Close viewer");
-                    if response.clicked() {
+                    // A quarter disc tucked into the top-right corner, with a
+                    // cross centred in it.
+                    const SIZE: f32 = 58.0;
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(SIZE, SIZE), egui::Sense::click());
+                    let pointer_inside = response
+                        .hover_pos()
+                        .is_some_and(|pos| (pos - rect.right_top()).length() <= SIZE);
+                    let response = response.on_hover_text("Close viewer");
+                    let fill_alpha = if pointer_inside { 205.0 } else { 160.0 };
+                    let fill = egui::Color32::from_black_alpha((fill_alpha * close_alpha) as u8);
+                    let painter = ui.painter().with_clip_rect(rect);
+                    painter.circle_filled(rect.right_top(), SIZE, fill);
+
+                    let center = rect.right_top() + egui::vec2(-SIZE * 0.42, SIZE * 0.42);
+                    let arm = 10.0;
+                    let stroke = egui::Stroke::new(
+                        2.0,
+                        egui::Color32::from_white_alpha((235.0 * close_alpha) as u8),
+                    );
+                    painter.line_segment(
+                        [
+                            center + egui::vec2(-arm, -arm),
+                            center + egui::vec2(arm, arm),
+                        ],
+                        stroke,
+                    );
+                    painter.line_segment(
+                        [
+                            center + egui::vec2(-arm, arm),
+                            center + egui::vec2(arm, -arm),
+                        ],
+                        stroke,
+                    );
+
+                    let clicked_inside = response.clicked()
+                        && response
+                            .interact_pointer_pos()
+                            .is_some_and(|pos| (pos - rect.right_top()).length() <= SIZE);
+                    if clicked_inside {
                         actions.push(UiAction::Close);
                     }
                 });
