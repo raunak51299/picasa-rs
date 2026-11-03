@@ -759,6 +759,19 @@ impl App {
                                                 if let Some(gps) = &info.gps {
                                                     info_row(ui, "GPS", gps);
                                                 }
+                                                if info.gps_map_url.is_some() {
+                                                    ui.label(
+                                                        egui::RichText::new("Map")
+                                                            .size(10.0)
+                                                            .color(egui::Color32::from_gray(135)),
+                                                    );
+                                                    if small_button(ui, "Open in Google Maps")
+                                                        .clicked()
+                                                    {
+                                                        actions.push(UiAction::OpenGpsMap);
+                                                    }
+                                                    ui.end_row();
+                                                }
                                             });
 
                                         if info.metadata.is_empty() {

@@ -78,6 +78,15 @@ pub fn open_default(path: &Path) -> Result<()> {
     shell_execute("open", path, "open with its default application")
 }
 
+/// Open a URL in the user's default browser.
+pub fn open_url(url: &str) -> Result<()> {
+    shell_execute(
+        "open",
+        Path::new(url),
+        "open the link in the default browser",
+    )
+}
+
 /// Send the file to the application registered for the shell `print` verb.
 pub fn print(path: &Path) -> Result<()> {
     shell_execute("print", path, "print")

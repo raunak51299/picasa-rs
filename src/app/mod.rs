@@ -97,6 +97,7 @@ enum UiAction {
     CopyImage,
     CopyPath,
     OpenDefault,
+    OpenGpsMap,
     Reveal,
     Print,
     SetAdjustments(Adjustments),

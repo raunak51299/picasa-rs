@@ -35,6 +35,8 @@ pub struct PhotoInfo {
     pub iso: Option<u32>,
     pub focal_length: Option<String>,
     pub gps: Option<String>,
+    /// Google Maps URL for the photo's GPS coordinates.
+    pub gps_map_url: Option<String>,
     /// Every EXIF field, grouped by IFD and tag context.
     pub metadata: Vec<MetadataSection>,
 }
@@ -146,7 +148,9 @@ pub fn read(path: &Path) -> PhotoInfo {
         }
     });
 
-    let gps = gps_string(&exif);
+    let gps_position = gps_position(&exif);
+    let gps = gps_position.as_ref().map(GpsPosition::display);
+    let gps_map_url = gps_position.as_ref().map(GpsPosition::maps_url);
     let metadata = collect_metadata(&exif);
 
     PhotoInfo {
@@ -161,6 +165,7 @@ pub fn read(path: &Path) -> PhotoInfo {
         iso,
         focal_length,
         gps,
+        gps_map_url,
         metadata,
     }
 }
@@ -282,7 +287,34 @@ fn header_dimensions(path: &Path) -> Option<(u32, u32)> {
         .ok()
 }
 
-fn gps_string(exif: &exif::Exif) -> Option<String> {
+#[derive(Debug, Clone, PartialEq)]
+struct GpsPosition {
+    latitude: f64,
+    longitude: f64,
+    latitude_ref: String,
+    longitude_ref: String,
+}
+
+impl GpsPosition {
+    fn display(&self) -> String {
+        format!(
+            "{:.6}° {}, {:.6}° {}",
+            self.latitude.abs(),
+            self.latitude_ref,
+            self.longitude.abs(),
+            self.longitude_ref
+        )
+    }
+
+    fn maps_url(&self) -> String {
+        format!(
+            "https://www.google.com/maps/search/?api=1&query={:.6},{:.6}",
+            self.latitude, self.longitude
+        )
+    }
+}
+
+fn gps_position(exif: &Exif) -> Option<GpsPosition> {
     let coordinate = |tag: Tag, reference_tag: Tag| {
         let values = match &exif.get_field(tag, In::PRIMARY)?.value {
             Value::Rational(values) if values.len() >= 3 => values,
@@ -311,11 +343,12 @@ fn gps_string(exif: &exif::Exif) -> Option<String> {
 
     let (latitude, latitude_ref) = coordinate(Tag::GPSLatitude, Tag::GPSLatitudeRef)?;
     let (longitude, longitude_ref) = coordinate(Tag::GPSLongitude, Tag::GPSLongitudeRef)?;
-    Some(format!(
-        "{:.6}° {latitude_ref}, {:.6}° {longitude_ref}",
-        latitude.abs(),
-        longitude.abs()
-    ))
+    Some(GpsPosition {
+        latitude,
+        longitude,
+        latitude_ref,
+        longitude_ref,
+    })
 }
 
 pub fn dms_to_decimal(values: &[exif::Rational]) -> Option<f64> {
@@ -439,7 +472,32 @@ mod tests {
         assert!(info.dimensions.is_none());
         assert!(info.camera.is_none());
         assert!(info.gps.is_none());
+        assert!(info.gps_map_url.is_none());
         assert!(info.metadata.is_empty());
+    }
+
+    #[test]
+    fn gps_coordinates_link_to_google_maps() {
+        let position = GpsPosition {
+            latitude: 48.858333,
+            longitude: 2.294444,
+            latitude_ref: "N".to_string(),
+            longitude_ref: "E".to_string(),
+        };
+        assert_eq!(position.display(), "48.858333° N, 2.294444° E");
+        assert_eq!(
+            position.maps_url(),
+            "https://www.google.com/maps/search/?api=1&query=48.858333,2.294444"
+        );
+
+        let southern = GpsPosition {
+            latitude: -33.856784,
+            longitude: 151.215297,
+            latitude_ref: "S".to_string(),
+            longitude_ref: "E".to_string(),
+        };
+        assert_eq!(southern.display(), "33.856784° S, 151.215297° E");
+        assert!(southern.maps_url().ends_with("query=-33.856784,151.215297"));
     }
 
     #[test]

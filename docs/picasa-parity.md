@@ -31,7 +31,7 @@ adds.
 | Fit / 1:1 | Fit, actual size, and a zoom percentage. | Already present; the existing controls were kept. |
 | Slideshow | Play/pause, interval, full-screen advance. | Done: play/pause button, `Space`/`S`, 2-30 second interval with `[`/`]`, fade-in per photo, and `Esc` stops without closing. |
 | Delete | `Delete` moved the photo to the Recycle Bin and advanced. | Done: confirmation (disable with `confirm_delete = false`), Recycle Bin via the Windows shell, and advance to the next image. |
-| Info panel | `I` showed file and camera metadata. | Done: overlay with filename, dimensions, size, date, camera, exposure, ISO, focal length, and GPS, plus every EXIF field grouped by IFD in a scrollable list. |
+| Info panel | `I` showed file and camera metadata. | Done: overlay with filename, dimensions, size, date, camera, exposure, ISO, focal length, and GPS, plus every EXIF field grouped by IFD in a scrollable list. Photos with GPS coordinates also get an Open in Google Maps button. |
 | One-click fixes | Auto colour/contrast, lighten, darken, then save. | Done: GPU brightness/contrast/gamma/level uniforms, non-destructive until Save or Save a copy, plus Revert. JPEG saves keep the original EXIF APP1 segment and re-encode at quality 92. |
 | Open and share | Reveal in Explorer, open in an editor, copy. | Done: share panel (`C`) with Copy image, Copy path, Open, Show in folder, and Print, plus the `Ctrl+C`, `Ctrl+Shift+C`, `Ctrl+E`, `Ctrl+Enter`, and `Ctrl+P` shortcuts. |
 | Print | Printed the current photo with the shell print verb. | Done: Windows shell `print` verb on the current file. |

@@ -527,6 +527,30 @@ impl App {
         }
     }
 
+    fn open_gps_map(&mut self) {
+        let Some(url) = self
+            .photo_info
+            .as_ref()
+            .and_then(|info| info.gps_map_url.as_deref())
+        else {
+            return;
+        };
+        match share::open_url(url) {
+            Ok(()) => {
+                self.toast = Some(Toast {
+                    text: "Opened the photo location in Google Maps".to_string(),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+            Err(error) => {
+                self.toast = Some(Toast {
+                    text: truncate(&format!("Could not open Google Maps: {error:#}"), 150),
+                    until: Instant::now() + TOAST_DURATION,
+                });
+            }
+        }
+    }
+
     fn print_current(&mut self) {
         let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
             return;
@@ -628,6 +652,7 @@ impl App {
             UiAction::CopyImage => self.copy_current_image(),
             UiAction::CopyPath => self.copy_current_path(),
             UiAction::OpenDefault => self.open_current(),
+            UiAction::OpenGpsMap => self.open_gps_map(),
             UiAction::Reveal => self.reveal_current(),
             UiAction::Print => self.print_current(),
             UiAction::SetAdjustments(mut adjustments) => {

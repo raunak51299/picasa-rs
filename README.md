@@ -48,7 +48,8 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
   camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates, plus
   a scrollable list of every EXIF field grouped by image, EXIF, GPS, and
-  interoperability IFDs. Unknown tags stay visible by number.
+  interoperability IFDs. Unknown tags stay visible by number, and photos with
+  GPS coordinates get a button that opens the location in Google Maps.
 - **Animated photos** — animated GIF and WebP files play automatically with
   their frame delays, looping while the photo is on screen. Playback restarts
   from the first frame when you navigate back. Animations larger than 256 MiB
