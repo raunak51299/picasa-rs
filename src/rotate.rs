@@ -1,73 +1,16 @@
-//! Lossless 90-degree rotation for JPEG files.
+//! JPEG EXIF and ICC metadata helpers.
 //!
-//! The compressed image data is never touched. The EXIF orientation tag is
-//! rewritten, which every decoder (including this viewer) applies on load.
-//! Other formats are reported as unsupported rather than re-encoded.
+//! Rotation is a session-only view transform; this module only reads
+//! orientation tags and copies EXIF/ICC segments when saving.
 
-use std::fs::File;
-use std::io::{Cursor, Write};
-use std::path::Path;
+use std::io::Cursor;
 
 use anyhow::{Context, Result, bail};
+#[cfg(test)]
 use exif::experimental::Writer;
-use exif::{Field, In, Reader, Tag, Value};
-
-/// Orientation values 1..=8 after rotating the displayed image clockwise or
-/// counter-clockwise by 90 degrees.
-pub fn rotate_orientation(orientation: u16, clockwise: bool) -> u16 {
-    let orientation = if (1..=8).contains(&orientation) {
-        orientation
-    } else {
-        1
-    };
-    const CLOCKWISE: [u16; 8] = [6, 7, 8, 5, 2, 3, 4, 1];
-    const COUNTER_CLOCKWISE: [u16; 8] = [8, 5, 6, 7, 4, 1, 2, 3];
-    let table = if clockwise {
-        CLOCKWISE
-    } else {
-        COUNTER_CLOCKWISE
-    };
-    table[(orientation - 1) as usize]
-}
-
-pub fn is_supported(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
-        })
-}
-
-/// Rotate the file's EXIF orientation and return the new orientation value.
-pub fn rotate_file(path: &Path, clockwise: bool) -> Result<u16> {
-    if !is_supported(path) {
-        bail!("persistent rotation is only supported for JPEG files");
-    }
-
-    let data = std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
-    let current = read_orientation(&data).unwrap_or(1);
-    let next = rotate_orientation(current, clockwise);
-    let rewritten = rewrite_jpeg_orientation(&data, next)?;
-
-    let temporary = path.with_extension("picasa-rs.tmp");
-    let result = (|| -> Result<()> {
-        let mut file = File::create(&temporary)
-            .with_context(|| format!("could not create {}", temporary.display()))?;
-        file.write_all(&rewritten)
-            .with_context(|| format!("could not write {}", temporary.display()))?;
-        file.sync_all()
-            .with_context(|| format!("could not flush {}", temporary.display()))?;
-        drop(file);
-        std::fs::rename(&temporary, path)
-            .with_context(|| format!("could not replace {}", path.display()))
-    })();
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error);
-    }
-
-    Ok(next)
-}
+#[cfg(test)]
+use exif::{Field, Value};
+use exif::{In, Reader, Tag};
 
 /// Read the primary orientation from a JPEG or TIFF container.
 pub fn read_orientation(data: &[u8]) -> Result<u16> {
@@ -85,6 +28,7 @@ pub fn read_orientation(data: &[u8]) -> Result<u16> {
 
 /// Replace (or add) the EXIF APP1 segment of a JPEG, preserving all other
 /// segments and the compressed scan data byte for byte.
+#[cfg(test)]
 pub fn rewrite_jpeg_orientation(data: &[u8], orientation: u16) -> Result<Vec<u8>> {
     let orientation = orientation.clamp(1, 8);
     let has_exif = exif_tiff_range(data).is_some();
@@ -172,6 +116,7 @@ pub fn exif_app1(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Byte range of the TIFF structure inside the first EXIF APP1 segment.
+#[cfg(test)]
 fn exif_tiff_range(data: &[u8]) -> Option<std::ops::Range<usize>> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return None;
@@ -203,6 +148,7 @@ fn exif_tiff_range(data: &[u8]) -> Option<std::ops::Range<usize>> {
 
 /// Overwrite the primary-IFD orientation value. Returns false when the tag is
 /// absent or the structure is not a well-formed single SHORT value.
+#[cfg(test)]
 fn patch_orientation_in_place(data: &mut [u8], orientation: u16) -> bool {
     let Some(range) = exif_tiff_range(data) else {
         return false;
@@ -308,6 +254,7 @@ pub fn insert_segments_after_soi(data: &[u8], segments: &[Vec<u8>]) -> Result<Ve
     Ok(output)
 }
 
+#[cfg(test)]
 fn read_fields(data: &[u8]) -> Result<Vec<Field>> {
     let reader = Reader::new();
     let exif = reader
@@ -370,19 +317,6 @@ pub fn insert_exif_segment(data: &[u8], app1: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn orientation_composition_wraps_both_ways() {
-        for orientation in 1..=8 {
-            let clockwise = rotate_orientation(orientation, true);
-            assert_eq!(rotate_orientation(clockwise, false), orientation);
-        }
-        assert_eq!(rotate_orientation(1, true), 6);
-        assert_eq!(rotate_orientation(6, true), 3);
-        assert_eq!(rotate_orientation(3, true), 8);
-        assert_eq!(rotate_orientation(8, true), 1);
-        assert_eq!(rotate_orientation(0, true), 6);
-    }
 
     fn make_exif_app1(orientation: u16, description: &str) -> Vec<u8> {
         let orientation = Field {

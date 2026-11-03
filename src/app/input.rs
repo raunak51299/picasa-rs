@@ -10,15 +10,13 @@ use winit::window::{CursorIcon, Fullscreen, ResizeDirection};
 
 use crate::delete;
 use crate::loader::JobKind;
-use crate::rotate;
 use crate::save::{self, SaveMode};
 use crate::share;
 use crate::viewer::camera::Vec2;
 
 use super::slideshow::{Slideshow, stepped_interval};
 use super::{
-    App, HELP_DURATION, JobResult, RotationRequest, SaveRequest, TOAST_DURATION, Toast, UiAction,
-    truncate,
+    App, HELP_DURATION, JobResult, SaveRequest, TOAST_DURATION, Toast, UiAction, truncate,
 };
 
 impl App {
@@ -43,21 +41,6 @@ impl App {
                 match code {
                     KeyCode::Enter | KeyCode::KeyY => self.confirm_save(),
                     KeyCode::Escape | KeyCode::KeyN => self.pending_save = None,
-                    _ => {}
-                }
-            }
-            self.record_activity();
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-            return;
-        }
-
-        if self.pending_rotation.is_some() {
-            if !repeat {
-                match code {
-                    KeyCode::Enter | KeyCode::KeyY => self.confirm_rotation(),
-                    KeyCode::Escape | KeyCode::KeyN => self.pending_rotation = None,
                     _ => {}
                 }
             }
@@ -94,14 +77,14 @@ impl App {
             }
             KeyCode::ArrowLeft => {
                 if self.modifiers.control_key() {
-                    self.request_rotation(false);
+                    self.rotate_view(false);
                 } else {
                     self.navigate_by(-1);
                 }
             }
             KeyCode::ArrowRight => {
                 if self.modifiers.control_key() {
-                    self.request_rotation(true);
+                    self.rotate_view(true);
                 } else {
                     self.navigate_by(1);
                 }
@@ -136,20 +119,12 @@ impl App {
             }
             KeyCode::KeyR => {
                 if !repeat {
-                    if self.modifiers.shift_key() {
-                        self.camera.rotate(std::f32::consts::FRAC_PI_2);
-                    } else {
-                        self.request_rotation(true);
-                    }
+                    self.rotate_view(true);
                 }
             }
             KeyCode::KeyL => {
                 if !repeat {
-                    if self.modifiers.shift_key() {
-                        self.camera.rotate(-std::f32::consts::FRAC_PI_2);
-                    } else {
-                        self.request_rotation(false);
-                    }
+                    self.rotate_view(false);
                 }
             }
             KeyCode::Delete => {
@@ -318,6 +293,7 @@ impl App {
                 self.reload_thumb.remove(&path);
                 self.failed_animation.remove(&path);
                 self.no_animation.remove(&path);
+                self.session_rotation.remove(&path);
                 if self
                     .animation
                     .as_ref()
@@ -600,68 +576,24 @@ impl App {
         }
     }
 
-    fn request_rotation(&mut self, clockwise: bool) {
-        let Some(path) = self.nav.current_path().map(|path| path.to_path_buf()) else {
+    /// Rotate the current photo for this session only. The file is untouched.
+    fn rotate_view(&mut self, clockwise: bool) {
+        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
             return;
         };
-        if !rotate::is_supported(&path) {
-            self.toast = Some(Toast {
-                text: "Persistent rotation is only supported for JPEG files".to_string(),
-                until: Instant::now() + TOAST_DURATION,
-            });
-            return;
+        let turns = self.session_rotation.get(&path).copied().unwrap_or(0);
+        let turns = super::stepped_quarter_turn(turns, clockwise);
+        if turns == 0 {
+            self.session_rotation.remove(&path);
+        } else {
+            self.session_rotation.insert(path, turns);
         }
-        self.pending_rotation = Some(RotationRequest { path, clockwise });
-    }
-
-    fn confirm_rotation(&mut self) {
-        if self.jobs_busy() {
-            return;
-        }
-        let Some(request) = self.pending_rotation.take() else {
-            return;
-        };
-        let name = request
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        self.spawn_job(move || JobResult::Rotated {
-            result: rotate::rotate_file(&request.path, request.clockwise),
-            path: request.path,
-            name,
+        self.camera.rotate(if clockwise {
+            std::f32::consts::FRAC_PI_2
+        } else {
+            -std::f32::consts::FRAC_PI_2
         });
-    }
-
-    pub(super) fn finish_rotation(
-        &mut self,
-        path: PathBuf,
-        name: String,
-        result: anyhow::Result<u16>,
-    ) {
-        match result {
-            Ok(orientation) => {
-                self.invalidate_path(&path);
-                self.toast = Some(Toast {
-                    text: format!("Rotated {name}"),
-                    until: Instant::now() + TOAST_DURATION,
-                });
-                log::info!(
-                    "rotated {} to EXIF orientation {orientation}",
-                    path.display()
-                );
-                self.camera.clear_image();
-                self.on_current_changed();
-            }
-            Err(error) => {
-                self.toast = Some(Toast {
-                    text: truncate(&format!("Could not rotate {name}: {error:#}"), 150),
-                    until: Instant::now() + TOAST_DURATION,
-                });
-            }
-        }
+        self.request_window();
     }
 
     pub(super) fn apply_action(&mut self, action: UiAction) {
@@ -669,9 +601,7 @@ impl App {
             UiAction::Navigate(index) => self.navigate_to(index),
             UiAction::Fit => self.camera.reset_fit(),
             UiAction::ActualSize => self.camera.toggle_actual_size(self.viewport_center()),
-            UiAction::RotatePersist(clockwise) => self.request_rotation(clockwise),
-            UiAction::ConfirmRotation => self.confirm_rotation(),
-            UiAction::CancelRotation => self.pending_rotation = None,
+            UiAction::RotateView(clockwise) => self.rotate_view(clockwise),
             UiAction::Delete => self.request_delete(),
             UiAction::ConfirmDelete => self.confirm_delete(),
             UiAction::CancelDelete => self.pending_delete = None,

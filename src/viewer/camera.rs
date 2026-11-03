@@ -195,9 +195,8 @@ impl Camera {
     }
 
     pub fn reset_fit(&mut self) {
-        self.target_angle = 0.0;
         self.fit_mode = true;
-        self.target_scale = self.fit_scale(0.0);
+        self.target_scale = self.fit_scale(self.target_angle);
         self.target_offset = Vec2::default();
     }
 
@@ -210,6 +209,21 @@ impl Camera {
         }
         if self.fit_mode {
             self.target_scale = self.fit_scale(self.target_angle);
+            self.target_offset = Vec2::default();
+        }
+        self.clamp_offsets();
+    }
+
+    /// Set the absolute view rotation without animating. Used when a photo is
+    /// selected or finishes loading so its session rotation appears at once.
+    pub fn set_rotation(&mut self, angle: f32) {
+        let angle = angle.rem_euclid(TAU);
+        self.angle = angle;
+        self.target_angle = angle;
+        if self.fit_mode {
+            self.scale = self.fit_scale(angle);
+            self.target_scale = self.scale;
+            self.offset = Vec2::default();
             self.target_offset = Vec2::default();
         }
         self.clamp_offsets();
@@ -412,5 +426,33 @@ mod tests {
         settle(&mut camera);
         assert_eq!(camera.rotation_degrees(), 0);
         assert!((camera.scale - fit_scale).abs() < 0.01);
+    }
+
+    #[test]
+    fn set_rotation_snaps_and_refits() {
+        let mut camera = camera();
+        let unrotated = camera.scale;
+
+        camera.set_rotation(FRAC_PI_2);
+
+        assert_eq!(camera.rotation_degrees(), 90);
+        assert!((camera.angle - FRAC_PI_2).abs() < 1e-6);
+        assert!((camera.target_angle - FRAC_PI_2).abs() < 1e-6);
+        assert!(camera.scale < unrotated);
+        assert!((camera.scale - camera.fit_scale(FRAC_PI_2)).abs() < 1e-6);
+        assert!(!camera.is_animating());
+    }
+
+    #[test]
+    fn reset_fit_keeps_the_view_rotation() {
+        let mut camera = camera();
+        camera.rotate(FRAC_PI_2);
+        settle(&mut camera);
+
+        camera.reset_fit();
+        settle(&mut camera);
+
+        assert_eq!(camera.rotation_degrees(), 90);
+        assert!((camera.scale - camera.fit_scale(FRAC_PI_2)).abs() < 0.01);
     }
 }

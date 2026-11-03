@@ -29,17 +29,6 @@ impl App {
             .as_ref()
             .filter(|toast| now < toast.until)
             .map(|toast| toast.text.clone());
-        let rotation = self.pending_rotation.as_ref().map(|request| {
-            (
-                request
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-                request.clockwise,
-            )
-        });
         let deletion = self.pending_delete.as_ref().map(|path| {
             path.file_name()
                 .unwrap_or_default()
@@ -198,10 +187,10 @@ impl App {
                                     actions.push(UiAction::ActualSize);
                                 }
                                 if small_button(ui, "Rot -").clicked() {
-                                    actions.push(UiAction::RotatePersist(false));
+                                    actions.push(UiAction::RotateView(false));
                                 }
                                 if small_button(ui, "Rot +").clicked() {
-                                    actions.push(UiAction::RotatePersist(true));
+                                    actions.push(UiAction::RotateView(true));
                                 }
                                 if small_button(ui, "Fix").clicked() {
                                     actions.push(UiAction::ToggleFixes);
@@ -497,46 +486,6 @@ impl App {
                                     .size(11.0)
                                     .color(egui::Color32::from_gray(130)),
                             );
-                        });
-                });
-        }
-
-        if let Some((file_name, clockwise)) = rotation {
-            let direction = if clockwise { "right" } else { "left" };
-            egui::Area::new(egui::Id::unique("rotate-confirm"))
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha(210))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)))
-                        .corner_radius(egui::CornerRadius::same(16))
-                        .inner_margin(egui::Margin::same(18))
-                        .show(ui, |ui| {
-                            ui.set_max_width(430.0);
-                            ui.label(
-                                egui::RichText::new(format!("Rotate {file_name} {direction}?"))
-                                    .size(14.0)
-                                    .strong(),
-                            );
-                            ui.add_space(5.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "The EXIF orientation tag will be rewritten in the file. \
-                                     The compressed pixels are not re-encoded.",
-                                )
-                                .size(11.0)
-                                .color(egui::Color32::from_gray(170)),
-                            );
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                if small_button(ui, "Rotate and save").clicked() {
-                                    actions.push(UiAction::ConfirmRotation);
-                                }
-                                if small_button(ui, "Cancel").clicked() {
-                                    actions.push(UiAction::CancelRotation);
-                                }
-                            });
                         });
                 });
         }

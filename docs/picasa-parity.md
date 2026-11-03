@@ -27,7 +27,7 @@ adds.
 
 | Feature | Picasa Photo Viewer behaviour | picasa-rs status |
 | :--- | :--- | :--- |
-| Persistent rotation | Rotate buttons wrote the rotation to the file. | Done: `R`/`L` and `Ctrl+Left/Right` rewrite the EXIF orientation of JPEGs after confirmation. `Shift+R`/`L` keeps the old view-only rotation. |
+| Rotation | Rotate buttons wrote the rotation to the file. | Done: `R`/`L`, `Ctrl+Left/Right`, and the HUD arrows rotate the view by 90°. Rotation is session-only and never rewrites the file. |
 | Fit / 1:1 | Fit, actual size, and a zoom percentage. | Already present; the existing controls were kept. |
 | Slideshow | Play/pause, interval, full-screen advance. | Done: play/pause button, `Space`/`S`, 2-30 second interval with `[`/`]`, fade-in per photo, and `Esc` stops without closing. |
 | Delete | `Delete` moved the photo to the Recycle Bin and advanced. | Done: confirmation (disable with `confirm_delete = false`), Recycle Bin via the Windows shell, and advance to the next image. |

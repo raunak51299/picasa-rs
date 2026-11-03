@@ -196,9 +196,8 @@ CONTROLS:
     Ctrl + E            show the file in Explorer
     Ctrl + Enter        open with the default application
     Ctrl + P            print with the registered print handler
-    R / L               rotate clockwise / counter-clockwise and save
-    Ctrl + Left/Right   rotate clockwise / counter-clockwise and save
-    Shift + R / L       rotate the view only
+    R / L               rotate the view clockwise / counter-clockwise (session only)
+    Ctrl + Left/Right   rotate the view clockwise / counter-clockwise
     H                   show help
     F5                  refresh the folder listing and retry failed images
     Esc                 stop slideshow, or close

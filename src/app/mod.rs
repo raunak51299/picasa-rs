@@ -53,11 +53,6 @@ struct Toast {
     until: Instant,
 }
 
-struct RotationRequest {
-    path: PathBuf,
-    clockwise: bool,
-}
-
 struct SaveRequest {
     path: PathBuf,
     adjustments: Adjustments,
@@ -70,7 +65,7 @@ pub enum UserEvent {
     Focus,
     /// Another launch asked this viewer to open a file or directory.
     OpenPath(PathBuf),
-    /// A background save, rotation or copy finished.
+    /// A background save or copy finished.
     JobDone,
 }
 
@@ -79,11 +74,6 @@ pub(crate) enum JobResult {
     Saved {
         name: String,
         result: Result<crate::save::SavedFile>,
-    },
-    Rotated {
-        path: PathBuf,
-        name: String,
-        result: Result<u16>,
     },
     Copied {
         path: PathBuf,
@@ -97,9 +87,7 @@ enum UiAction {
     Navigate(usize),
     Fit,
     ActualSize,
-    RotatePersist(bool),
-    ConfirmRotation,
-    CancelRotation,
+    RotateView(bool),
     Delete,
     ConfirmDelete,
     CancelDelete,
@@ -142,6 +130,9 @@ pub struct App {
     egui_state: Option<egui_winit::State>,
     loader: Option<Loader>,
     camera: Camera,
+    /// Quarter turns applied to each photo for this run only. The file's EXIF
+    /// orientation is never rewritten.
+    session_rotation: HashMap<PathBuf, u8>,
     photos: HashMap<PathBuf, GpuPhoto>,
     thumbs: HashMap<PathBuf, egui::TextureHandle>,
     /// Animation of the current photo, if it has more than one frame.
@@ -155,7 +146,7 @@ pub struct App {
     deferred_loader_events: Vec<LoaderEvent>,
     failed_full: HashMap<PathBuf, String>,
     failed_thumb: HashSet<PathBuf>,
-    /// Files whose cached pixels must be replaced after a persistent rotation.
+    /// Files whose cached pixels must be replaced after a save.
     reload_full: HashSet<PathBuf>,
     reload_thumb: HashSet<PathBuf>,
     cursor: Option<PhysicalPosition<f64>>,
@@ -179,7 +170,6 @@ pub struct App {
     photo_fade_start: Instant,
     show_help_until: Instant,
     toast: Option<Toast>,
-    pending_rotation: Option<RotationRequest>,
     pending_delete: Option<PathBuf>,
     show_info: bool,
     photo_info: Option<PhotoInfo>,
@@ -224,6 +214,16 @@ fn install_system_font(ctx: &egui::Context) {
         family.insert(0, "segoe-ui".to_owned());
     }
     ctx.set_fonts(fonts);
+}
+
+/// Advance a session rotation by one quarter turn, wrapping after a full turn.
+fn stepped_quarter_turn(turns: u8, clockwise: bool) -> u8 {
+    let turns = turns % 4;
+    if clockwise {
+        (turns + 1) % 4
+    } else {
+        (turns + 3) % 4
+    }
 }
 
 fn shortcut_code(logical: &Key, physical: PhysicalKey) -> Option<KeyCode> {
@@ -329,6 +329,7 @@ impl App {
             egui_state: None,
             loader: Some(loader),
             camera: Camera::default(),
+            session_rotation: HashMap::new(),
             photos: HashMap::new(),
             thumbs: HashMap::new(),
             animation: None,
@@ -355,7 +356,6 @@ impl App {
             photo_fade_start: now,
             show_help_until: now + HELP_DURATION,
             toast: None,
-            pending_rotation: None,
             pending_delete: None,
             show_info: false,
             photo_info: None,
@@ -571,6 +571,7 @@ impl App {
             self.photo_fade = 1.0;
         }
 
+        self.apply_session_rotation();
         self.request_window();
         self.request_animation_for_current();
         self.record_activity();
@@ -580,6 +581,19 @@ impl App {
             window.set_title(&format!("{name} — picasa-rs"));
             window.request_redraw();
         }
+    }
+
+    /// Reapply the current photo's session rotation after the camera has been
+    /// reset for a newly selected or newly loaded image.
+    fn apply_session_rotation(&mut self) {
+        let turns = self
+            .nav
+            .current_path()
+            .and_then(|path| self.session_rotation.get(path))
+            .copied()
+            .unwrap_or(0);
+        self.camera
+            .set_rotation(f32::from(turns) * std::f32::consts::FRAC_PI_2);
     }
 
     fn navigate_by(&mut self, delta: isize) {
@@ -627,7 +641,6 @@ impl App {
         self.no_animation.clear();
         self.animation = None;
         self.deferred_loader_events.clear();
-        self.pending_rotation = None;
         self.pending_delete = None;
         self.pending_save = None;
         self.show_info = false;
@@ -691,7 +704,7 @@ impl App {
         }
     }
 
-    /// True (with a toast) while a background save, rotation or copy runs.
+    /// True (with a toast) while a background save or copy runs.
     fn jobs_busy(&mut self) -> bool {
         if self.jobs_running > 0 {
             self.show_toast("Another operation is still running");
@@ -717,9 +730,6 @@ impl App {
             self.jobs_running = self.jobs_running.saturating_sub(1);
             match result {
                 JobResult::Saved { name, result } => self.finish_save(name, result),
-                JobResult::Rotated { path, name, result } => {
-                    self.finish_rotation(path, name, result)
-                }
                 JobResult::Copied { path, name, result } => self.finish_copy(path, name, result),
             }
         }
@@ -1167,10 +1177,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if self.slideshow.as_ref().is_some_and(|show| show.is_due(now)) {
-            if self.pending_delete.is_some()
-                || self.pending_save.is_some()
-                || self.pending_rotation.is_some()
-            {
+            if self.pending_delete.is_some() || self.pending_save.is_some() {
                 // Don't advance behind an open confirmation dialog.
                 if let Some(show) = &mut self.slideshow {
                     show.defer(now);
@@ -1334,5 +1341,25 @@ mod tests {
             Some(anchor),
             at(HUD_WAKE_DISTANCE - 0.1, 0.0)
         ));
+    }
+
+    #[test]
+    fn session_rotation_wraps_after_four_turns() {
+        let mut turns = 0;
+        for _ in 0..4 {
+            turns = super::stepped_quarter_turn(turns, true);
+        }
+        assert_eq!(turns, 0);
+        assert_eq!(super::stepped_quarter_turn(3, true), 0);
+        assert_eq!(super::stepped_quarter_turn(0, false), 3);
+        assert_eq!(super::stepped_quarter_turn(3, false), 2);
+    }
+
+    #[test]
+    fn session_rotation_directions_are_inverse() {
+        for turns in 0..4 {
+            let clockwise = super::stepped_quarter_turn(turns, true);
+            assert_eq!(super::stepped_quarter_turn(clockwise, false), turns);
+        }
     }
 }

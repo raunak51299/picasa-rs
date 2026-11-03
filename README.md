@@ -53,9 +53,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   from the first frame when you navigate back. Animations larger than 256 MiB
   fall back to their first frame.
 - **Share actions** — `C` opens a share panel with Copy image, Copy path, Open,
-  Show in folder, and Print. Copy image captures the current view, including
-  EXIF orientation and color fixes, so it can be pasted into chat or an editor.
-  Print hands the file to the shell `print` handler.
+  Show in folder, and Print. Copy image captures the photo with its EXIF
+  orientation and color fixes applied, so it can be pasted into chat or an
+  editor. Print hands the file to the shell `print` handler.
 - **GPU color fixes** — `F` opens non-destructive brightness, contrast, gamma,
   and per-channel controls plus Auto, Lighten, Darken, Warm, and Cool presets.
   The shader applies them live without touching the file; Revert clears them.
@@ -63,9 +63,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   adjustments reset when you move to another photo.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
-- **Persistent rotation** — `R`/`L` or `Ctrl+Left`/`Right` rotate a JPEG by
-  rewriting its EXIF orientation after confirmation; the compressed pixels are
-  never re-encoded. `Shift+R`/`L` keeps the old view-only rotation.
+- **Session rotation** — `R`/`L`, `Ctrl+Left`/`Right`, or the HUD arrows rotate
+  the view by 90°. Rotation is temporary: it lasts until picasa-rs closes and
+  never rewrites the file's EXIF orientation.
 
 ## Requirements
 
@@ -139,9 +139,8 @@ $env:RUST_LOG = "info"
 | `Ctrl+Enter` | Open the file in its default application |
 | `Ctrl+P` | Print the file using the registered print handler |
 | `Delete` | Move the current photo to the Recycle Bin (asks first) |
-| `R` / `L` | Rotate clockwise / counter-clockwise and save (JPEG EXIF) |
-| `Ctrl+Left` / `Ctrl+Right` | Rotate and save |
-| `Shift+R` / `Shift+L` | Rotate the view only |
+| `R` / `L` | Rotate the view clockwise / counter-clockwise (session only) |
+| `Ctrl+Left` / `Ctrl+Right` | Rotate the view clockwise / counter-clockwise |
 | `H` | Show the help hint |
 | `Esc` | Stop the slideshow, or close when it is not playing |
 | `Q` | Close |
@@ -315,7 +314,7 @@ src/
   delete.rs               Recycle Bin shell call
   info.rs                 EXIF metadata reading and formatting
   preview.rs              native layered startup preview (Windows)
-  rotate.rs               lossless JPEG EXIF orientation rewriting
+  rotate.rs               JPEG EXIF/ICC metadata helpers
   save.rs                 adjusted-image saving and JPEG EXIF preservation
   share.rs                clipboard, Explorer, open, and print actions
   loader/

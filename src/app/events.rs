@@ -88,6 +88,7 @@ impl App {
 
                 if is_current {
                     self.camera.set_image(display_width, display_height);
+                    self.apply_session_rotation();
                     if self.startup_photo_ready {
                         self.photo_fade = 0.0;
                         self.photo_fade_start = Instant::now();
