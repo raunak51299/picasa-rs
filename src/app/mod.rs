@@ -888,7 +888,7 @@ impl App {
         };
 
         let center = self.camera.screen_center();
-        let half_size = self.camera.screen_half_size();
+        let half_size = self.camera.image_half_size();
         let angle = self.camera.angle;
         let alpha = self.photo_fade;
         let (adjust, gains) = self.adjustments.uniforms();

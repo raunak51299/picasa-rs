@@ -299,6 +299,13 @@ impl Camera {
         self.viewport * 0.5 + self.offset
     }
 
+    /// Half size of the image in screen pixels before the view rotation is
+    /// applied. The photo shader rotates this quad, so it must not include the
+    /// rotation itself.
+    pub fn image_half_size(&self) -> Vec2 {
+        self.image_size * (self.scale * 0.5)
+    }
+
     /// Screen-space half extents of the rotated, scaled image.
     pub fn screen_half_size(&self) -> Vec2 {
         self.rotated_extents(self.angle, self.scale) * 0.5
@@ -454,5 +461,21 @@ mod tests {
 
         assert_eq!(camera.rotation_degrees(), 90);
         assert!((camera.scale - camera.fit_scale(FRAC_PI_2)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_photo_quad_is_rotated_by_the_shader_not_pre_rotated() {
+        let mut camera = camera();
+        camera.rotate(FRAC_PI_2);
+        settle(&mut camera);
+
+        let half = camera.image_half_size();
+        assert!((half.x - camera.image_size.x * camera.scale * 0.5).abs() < 1e-6);
+        assert!((half.y - camera.image_size.y * camera.scale * 0.5).abs() < 1e-6);
+
+        // At a quarter turn the screen bounding box swaps the two axes.
+        let screen = camera.screen_half_size();
+        assert!((screen.x - half.y).abs() < 0.01);
+        assert!((screen.y - half.x).abs() < 0.01);
     }
 }
