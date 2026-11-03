@@ -200,6 +200,8 @@ impl App {
                     self.adjust_slideshow(2);
                 }
             }
+            KeyCode::ArrowUp => self.zoom_in(),
+            KeyCode::ArrowDown => self.zoom_out(),
             KeyCode::Equal | KeyCode::NumpadAdd => {
                 let anchor = self
                     .cursor_point()
@@ -576,6 +578,16 @@ impl App {
         }
     }
 
+    /// Zoom in around the viewport centre, matching the HUD `+` button.
+    fn zoom_in(&mut self) {
+        self.camera.zoom_at(self.viewport_center(), 1.25);
+    }
+
+    /// Zoom out around the viewport centre, matching the HUD `-` button.
+    fn zoom_out(&mut self) {
+        self.camera.zoom_at(self.viewport_center(), 0.8);
+    }
+
     /// Rotate the current photo for this session only. The file is untouched.
     fn rotate_view(&mut self, clockwise: bool) {
         let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
@@ -625,8 +637,8 @@ impl App {
             UiAction::Save { mode, adjustments } => self.request_save(mode, adjustments),
             UiAction::ConfirmSave => self.confirm_save(),
             UiAction::CancelSave => self.pending_save = None,
-            UiAction::ZoomIn => self.camera.zoom_at(self.viewport_center(), 1.25),
-            UiAction::ZoomOut => self.camera.zoom_at(self.viewport_center(), 0.8),
+            UiAction::ZoomIn => self.zoom_in(),
+            UiAction::ZoomOut => self.zoom_out(),
             UiAction::SetZoom(scale) => self
                 .camera
                 .set_target_scale_at(scale, self.viewport_center()),

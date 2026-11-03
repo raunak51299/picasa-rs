@@ -181,6 +181,7 @@ CONTROLS:
     Left / Right        previous / next image
     Home / End          first / last image
     Scroll wheel        zoom around the cursor
+    Up / Down           zoom in / out around the centre
     Drag                pan
     Drop a file/folder  open it and rebuild the folder listing
     Double click / 1    toggle fit and 1:1

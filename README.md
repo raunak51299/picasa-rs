@@ -124,6 +124,7 @@ $env:RUST_LOG = "info"
 | `Left` / `Right` | Previous / next image (wraps) |
 | `Home` / `End` | First / last image |
 | Mouse wheel | Zoom around the cursor |
+| `Up` / `Down` | Zoom in / out around the centre |
 | Drag | Pan (drag the filmstrip to scroll it) |
 | Drop a file or folder | Open it and rebuild the folder listing |
 | Double-click / `1` | Toggle fit and 1:1 |
