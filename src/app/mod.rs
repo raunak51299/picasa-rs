@@ -196,22 +196,38 @@ pub struct App {
 
 /// Letter shortcuts follow the character the user's layout produces (so R is
 /// R on AZERTY or Dvorak); everything else uses the physical key.
-/// Prefer Segoe UI for the HUD. The bundled font renders stray bright boxes
-/// next to some glyphs; if Segoe UI is missing the defaults stay in place.
+/// Prefer Segoe UI for the HUD, with Segoe UI Symbol as a fallback for the
+/// rotation arrows. The bundled font renders stray bright boxes next to some
+/// glyphs; if neither system font is present the defaults stay in place.
 fn install_system_font(ctx: &egui::Context) {
     let windir = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
-    let path = Path::new(&windir).join("Fonts").join("segoeui.ttf");
-    let Ok(bytes) = std::fs::read(&path) else {
-        log::debug!("system font {} not found", path.display());
-        return;
-    };
+    let fonts_dir = Path::new(&windir).join("Fonts");
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "segoe-ui".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-    );
+    let mut installed = Vec::new();
+
+    for (name, file) in [
+        ("segoe-ui", "segoeui.ttf"),
+        ("segoe-ui-symbol", "seguisym.ttf"),
+    ] {
+        let path = fonts_dir.join(file);
+        let Ok(bytes) = std::fs::read(&path) else {
+            log::debug!("system font {} not found", path.display());
+            continue;
+        };
+        fonts.font_data.insert(
+            name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+        );
+        installed.push(name);
+    }
+    if installed.is_empty() {
+        return;
+    }
+
     if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        family.insert(0, "segoe-ui".to_owned());
+        for (index, name) in installed.iter().enumerate() {
+            family.insert(index, (*name).to_owned());
+        }
     }
     ctx.set_fonts(fonts);
 }

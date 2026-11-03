@@ -186,10 +186,16 @@ impl App {
                                 if small_button(ui, "1:1").clicked() {
                                     actions.push(UiAction::ActualSize);
                                 }
-                                if small_button(ui, "Rot -").clicked() {
+                                if small_button(ui, "↺")
+                                    .on_hover_text("Rotate counter-clockwise (session only)")
+                                    .clicked()
+                                {
                                     actions.push(UiAction::RotateView(false));
                                 }
-                                if small_button(ui, "Rot +").clicked() {
+                                if small_button(ui, "↻")
+                                    .on_hover_text("Rotate clockwise (session only)")
+                                    .clicked()
+                                {
                                     actions.push(UiAction::RotateView(true));
                                 }
                                 if small_button(ui, "Fix").clicked() {
