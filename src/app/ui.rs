@@ -210,11 +210,6 @@ impl App {
                                 if small_button(ui, "Delete").clicked() {
                                     actions.push(UiAction::Delete);
                                 }
-                                // Windowed mode uses the native title-bar
-                                // close button instead.
-                                if !windowed && small_button(ui, "X").clicked() {
-                                    actions.push(UiAction::Close);
-                                }
                             });
                         });
                 });
