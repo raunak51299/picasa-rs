@@ -46,8 +46,9 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   preferences) and moves the current photo to the Windows Recycle Bin, then
   advances to the next image.
 - **Info panel** — `I` shows the file name, dimensions, size, capture date,
-  camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates when
-  the file has them.
+  camera, lens, exposure, aperture, ISO, focal length, and GPS coordinates, plus
+  a scrollable list of every EXIF field grouped by image, EXIF, GPS, and
+  interoperability IFDs. Unknown tags stay visible by number.
 - **Animated photos** — animated GIF and WebP files play automatically with
   their frame delays, looping while the photo is on screen. Playback restarts
   from the first frame when you navigate back. Animations larger than 256 MiB

@@ -1,10 +1,26 @@
 //! Read and format the metadata shown in the info panel.
 
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use exif::{In, Reader, Tag, Value};
+use exif::{Context, Exif, Field, In, Reader, Tag, Value};
+
+const MAX_BINARY_BYTES: usize = 64;
+const MAX_VALUE_CHARS: usize = 240;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataEntry {
+    pub tag: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataSection {
+    pub label: String,
+    pub entries: Vec<MetadataEntry>,
+}
 
 #[derive(Debug, Default)]
 pub struct PhotoInfo {
@@ -19,6 +35,8 @@ pub struct PhotoInfo {
     pub iso: Option<u32>,
     pub focal_length: Option<String>,
     pub gps: Option<String>,
+    /// Every EXIF field, grouped by IFD and tag context.
+    pub metadata: Vec<MetadataSection>,
 }
 
 pub fn read(path: &Path) -> PhotoInfo {
@@ -129,6 +147,7 @@ pub fn read(path: &Path) -> PhotoInfo {
     });
 
     let gps = gps_string(&exif);
+    let metadata = collect_metadata(&exif);
 
     PhotoInfo {
         file_name,
@@ -142,7 +161,116 @@ pub fn read(path: &Path) -> PhotoInfo {
         iso,
         focal_length,
         gps,
+        metadata,
     }
+}
+
+#[derive(Default)]
+struct MetadataSectionBuilder {
+    entries: Vec<MetadataEntry>,
+    by_tag: HashMap<Tag, usize>,
+}
+
+impl MetadataSectionBuilder {
+    fn push(&mut self, tag: Tag, label: String, value: String) {
+        if let Some(&index) = self.by_tag.get(&tag) {
+            self.entries[index] = MetadataEntry { tag: label, value };
+        } else {
+            self.by_tag.insert(tag, self.entries.len());
+            self.entries.push(MetadataEntry { tag: label, value });
+        }
+    }
+}
+
+fn collect_metadata(exif: &Exif) -> Vec<MetadataSection> {
+    let mut sections: BTreeMap<(In, Context), MetadataSectionBuilder> = BTreeMap::new();
+    for field in exif.fields() {
+        sections
+            .entry((field.ifd_num, field.tag.context()))
+            .or_default()
+            .push(field.tag, tag_label(field.tag), value_text(exif, field));
+    }
+    sections
+        .into_iter()
+        .map(|((ifd, context), section)| MetadataSection {
+            label: section_label(ifd, context),
+            entries: section.entries,
+        })
+        .collect()
+}
+
+fn section_label(ifd: In, context: Context) -> String {
+    let base = match ifd.index() {
+        0 => "Image".to_string(),
+        1 => "Thumbnail".to_string(),
+        index => format!("IFD {index}"),
+    };
+    let suffix = match context {
+        Context::Tiff => return base,
+        Context::Exif => "EXIF",
+        Context::Gps => "GPS",
+        Context::Interop => "Interoperability",
+        _ => "Metadata",
+    };
+    if ifd.index() == 0 {
+        suffix.to_string()
+    } else {
+        format!("{base} {suffix}")
+    }
+}
+
+fn tag_label(tag: Tag) -> String {
+    if tag.description().is_some() {
+        tag.to_string()
+    } else {
+        format!("Tag 0x{:04X}", tag.number())
+    }
+}
+
+fn value_text(exif: &Exif, field: &Field) -> String {
+    if let Some(comment) = user_comment_text(field) {
+        return truncate_chars(&comment, MAX_VALUE_CHARS);
+    }
+    match binary_summary(&field.value) {
+        Some(summary) => summary,
+        None => truncate_chars(
+            &field.display_value().with_unit(exif).to_string(),
+            MAX_VALUE_CHARS,
+        ),
+    }
+}
+
+fn user_comment_text(field: &Field) -> Option<String> {
+    if field.tag != Tag::UserComment {
+        return None;
+    }
+    let bytes = match &field.value {
+        Value::Undefined(bytes, _) | Value::Byte(bytes) => bytes.as_slice(),
+        _ => return None,
+    };
+    let text = bytes.strip_prefix(b"ASCII\0\0\0")?;
+    let text = String::from_utf8_lossy(text)
+        .trim_end_matches('\0')
+        .trim()
+        .to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn binary_summary(value: &Value) -> Option<String> {
+    let length = match value {
+        Value::Undefined(bytes, _) | Value::Byte(bytes) => bytes.len(),
+        _ => return None,
+    };
+    (length > MAX_BINARY_BYTES).then(|| format!("{length} bytes of binary data"))
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    let mut chars = text.chars();
+    let mut result: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        result.push('…');
+    }
+    result
 }
 
 fn header_dimensions(path: &Path) -> Option<(u32, u32)> {
@@ -311,5 +439,94 @@ mod tests {
         assert!(info.dimensions.is_none());
         assert!(info.camera.is_none());
         assert!(info.gps.is_none());
+        assert!(info.metadata.is_empty());
+    }
+
+    #[test]
+    fn unknown_tags_stay_visible_by_number() {
+        assert_eq!(
+            tag_label(Tag(Context::Tiff, 0x1234)),
+            "Tag 0x1234".to_string()
+        );
+        assert_eq!(tag_label(Tag::Make), "Make".to_string());
+    }
+
+    #[test]
+    fn metadata_sections_are_named_by_ifd_and_context() {
+        assert_eq!(section_label(In::PRIMARY, Context::Tiff), "Image");
+        assert_eq!(section_label(In::PRIMARY, Context::Exif), "EXIF");
+        assert_eq!(section_label(In::PRIMARY, Context::Gps), "GPS");
+        assert_eq!(
+            section_label(In::PRIMARY, Context::Interop),
+            "Interoperability"
+        );
+        assert_eq!(section_label(In::THUMBNAIL, Context::Tiff), "Thumbnail");
+        assert_eq!(
+            section_label(In::THUMBNAIL, Context::Exif),
+            "Thumbnail EXIF"
+        );
+        assert_eq!(section_label(In(2), Context::Tiff), "IFD 2");
+    }
+
+    #[test]
+    fn large_binary_values_are_summarised() {
+        assert_eq!(binary_summary(&Value::Undefined(vec![0; 64], 0)), None);
+        assert_eq!(
+            binary_summary(&Value::Undefined(vec![0; 65], 0)).as_deref(),
+            Some("65 bytes of binary data")
+        );
+        assert_eq!(binary_summary(&Value::Byte(vec![1; 3])), None);
+    }
+
+    #[test]
+    fn long_values_are_truncated_on_a_character_boundary() {
+        assert_eq!(truncate_chars("abcdef", 4), "abcd…");
+        assert_eq!(truncate_chars("abcd", 4), "abcd");
+        assert_eq!(truncate_chars("éééé", 2), "éé…");
+    }
+
+    #[test]
+    fn ascii_user_comments_are_decoded() {
+        let comment = Field {
+            tag: Tag::UserComment,
+            ifd_num: In::PRIMARY,
+            value: Value::Byte(b"ASCII\0\0\0A short note.\0".to_vec()),
+        };
+        assert_eq!(
+            user_comment_text(&comment).as_deref(),
+            Some("A short note.")
+        );
+
+        let comment = Field {
+            tag: Tag::UserComment,
+            ifd_num: In::PRIMARY,
+            value: Value::Undefined(b"ASCII\0\0\0A test comment".to_vec(), 0),
+        };
+        assert_eq!(
+            user_comment_text(&comment).as_deref(),
+            Some("A test comment")
+        );
+
+        let not_a_comment = Field {
+            tag: Tag::Make,
+            ifd_num: In::PRIMARY,
+            value: Value::Byte(b"ASCII\0\0\0".to_vec()),
+        };
+        assert!(user_comment_text(&not_a_comment).is_none());
+    }
+
+    #[test]
+    fn duplicate_tags_replace_the_earlier_value_in_place() {
+        let mut section = MetadataSectionBuilder::default();
+        section.push(Tag::Make, tag_label(Tag::Make), "First".to_string());
+        section.push(Tag::Model, tag_label(Tag::Model), "Model".to_string());
+        section.push(Tag::Make, tag_label(Tag::Make), "Second".to_string());
+
+        let entries: Vec<_> = section
+            .entries
+            .iter()
+            .map(|entry| (entry.tag.as_str(), entry.value.as_str()))
+            .collect();
+        assert_eq!(entries, vec![("Make", "Second"), ("Model", "Model")]);
     }
 }

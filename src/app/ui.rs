@@ -684,6 +684,9 @@ impl App {
         if self.show_info {
             egui::Area::new(egui::Id::unique("info-panel"))
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-18.0, 64.0))
+                // Give the first sizing pass enough height for the scroll area;
+                // otherwise the area freezes at egui's default 400-point height.
+                .default_height((screen_size.y - 114.0).max(160.0))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::NONE
@@ -707,57 +710,100 @@ impl App {
                             ui.add_space(6.0);
 
                             if let Some(info) = &self.photo_info {
-                                egui::Grid::new("photo-info-grid")
-                                    .num_columns(2)
-                                    .spacing([12.0, 5.0])
+                                let max_height = (screen_size.y - 176.0).max(80.0);
+                                egui::ScrollArea::vertical()
+                                    .id_salt("photo-info-scroll")
+                                    .max_height(max_height)
+                                    .auto_shrink([false, true])
                                     .show(ui, |ui| {
-                                        let mut row = |label: &str, value: &str| {
-                                            ui.label(
-                                                egui::RichText::new(label)
-                                                    .size(10.0)
-                                                    .color(egui::Color32::from_gray(135)),
-                                            );
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(value)
-                                                        .size(12.0)
-                                                        .color(egui::Color32::from_gray(225)),
-                                                )
-                                                .wrap(),
-                                            );
-                                            ui.end_row();
-                                        };
+                                        egui::Grid::new("photo-info-grid")
+                                            .num_columns(2)
+                                            .spacing([12.0, 5.0])
+                                            .show(ui, |ui| {
+                                                info_row(ui, "File", &info.file_name);
+                                                if let Some((width, height)) = info.dimensions {
+                                                    info_row(
+                                                        ui,
+                                                        "Dimensions",
+                                                        &format!("{width} × {height}"),
+                                                    );
+                                                }
+                                                if let Some(size) = info.file_size {
+                                                    info_row(
+                                                        ui,
+                                                        "Size",
+                                                        &crate::info::format_file_size(size),
+                                                    );
+                                                }
+                                                if let Some(date) = &info.date {
+                                                    info_row(ui, "Date", date);
+                                                }
+                                                if let Some(camera) = &info.camera {
+                                                    info_row(ui, "Camera", camera);
+                                                }
+                                                if let Some(lens) = &info.lens {
+                                                    info_row(ui, "Lens", lens);
+                                                }
+                                                if let Some(exposure) = &info.exposure {
+                                                    info_row(ui, "Exposure", exposure);
+                                                }
+                                                if let Some(aperture) = &info.aperture {
+                                                    info_row(ui, "Aperture", aperture);
+                                                }
+                                                if let Some(iso) = info.iso {
+                                                    info_row(ui, "ISO", &iso.to_string());
+                                                }
+                                                if let Some(focal) = &info.focal_length {
+                                                    info_row(ui, "Focal length", focal);
+                                                }
+                                                if let Some(gps) = &info.gps {
+                                                    info_row(ui, "GPS", gps);
+                                                }
+                                            });
 
-                                        row("File", &info.file_name);
-                                        if let Some((width, height)) = info.dimensions {
-                                            row("Dimensions", &format!("{width} × {height}"));
-                                        }
-                                        if let Some(size) = info.file_size {
-                                            row("Size", &crate::info::format_file_size(size));
-                                        }
-                                        if let Some(date) = &info.date {
-                                            row("Date", date);
-                                        }
-                                        if let Some(camera) = &info.camera {
-                                            row("Camera", camera);
-                                        }
-                                        if let Some(lens) = &info.lens {
-                                            row("Lens", lens);
-                                        }
-                                        if let Some(exposure) = &info.exposure {
-                                            row("Exposure", exposure);
-                                        }
-                                        if let Some(aperture) = &info.aperture {
-                                            row("Aperture", aperture);
-                                        }
-                                        if let Some(iso) = info.iso {
-                                            row("ISO", &iso.to_string());
-                                        }
-                                        if let Some(focal) = &info.focal_length {
-                                            row("Focal length", focal);
-                                        }
-                                        if let Some(gps) = &info.gps {
-                                            row("GPS", gps);
+                                        if info.metadata.is_empty() {
+                                            ui.add_space(8.0);
+                                            ui.label(
+                                                egui::RichText::new("No EXIF metadata")
+                                                    .size(10.0)
+                                                    .color(egui::Color32::from_gray(145)),
+                                            );
+                                        } else {
+                                            let count = info
+                                                .metadata
+                                                .iter()
+                                                .map(|section| section.entries.len())
+                                                .sum::<usize>();
+                                            ui.add_space(10.0);
+                                            ui.separator();
+                                            ui.add_space(6.0);
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "All metadata ({count})"
+                                                ))
+                                                .size(11.0)
+                                                .strong()
+                                                .color(egui::Color32::from_gray(190)),
+                                            );
+                                            for (index, section) in info.metadata.iter().enumerate()
+                                            {
+                                                ui.add_space(6.0);
+                                                ui.label(
+                                                    egui::RichText::new(&section.label)
+                                                        .size(10.0)
+                                                        .strong()
+                                                        .color(egui::Color32::from_gray(165)),
+                                                );
+                                                ui.add_space(2.0);
+                                                egui::Grid::new(("photo-info-section", index))
+                                                    .num_columns(2)
+                                                    .spacing([12.0, 4.0])
+                                                    .show(ui, |ui| {
+                                                        for entry in &section.entries {
+                                                            info_row(ui, &entry.tag, &entry.value);
+                                                        }
+                                                    });
+                                            }
                                         }
                                     });
                             } else {
@@ -935,6 +981,23 @@ impl App {
 
         actions
     }
+}
+
+fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.label(
+        egui::RichText::new(label)
+            .size(10.0)
+            .color(egui::Color32::from_gray(135)),
+    );
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(value)
+                .size(12.0)
+                .color(egui::Color32::from_gray(225)),
+        )
+        .wrap(),
+    );
+    ui.end_row();
 }
 
 fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
