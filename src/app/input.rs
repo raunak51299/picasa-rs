@@ -793,7 +793,10 @@ impl App {
         // Windowed mode uses the native title bar so minimize, maximize, and
         // close match Explorer.
         window.set_decorations(true);
+        #[cfg(windows)]
+        super::reapply_window_icon(&window);
         window.set_resizable(true);
+        window.set_min_inner_size(Some(PhysicalSize::new(MIN_WIDTH as u32, MIN_HEIGHT as u32)));
         let _ = window.request_inner_size(PhysicalSize::new(width, height));
 
         if let Some(monitor) = monitor {

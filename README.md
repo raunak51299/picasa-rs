@@ -273,9 +273,19 @@ Helper files live in `packaging/`:
   administrator rights required.
 - `packaging/windows/uninstall.ps1` — removes those associations and optionally
   deletes the installed files.
-- `packaging/windows/picasa-rs.ico` — application icon.
+- `packaging/windows/picasa-rs.ico` — multi-resolution application icon
+  (16–256 px).
+- `packaging/windows/picasa-rs.rc` — Windows resource script that embeds the
+  icon in the executable.
+- `packaging/windows/picasa-rs.svg` — editable 1024 px vector source for the
+  icon.
+- `packaging/windows/picasa-rs.vectorcraft` — native VectorCraft document for
+  the icon, kept alongside the SVG for future edits.
 - `packaging/linux/picasa-rs.desktop` — desktop entry.
 - `packaging/macos/Info.plist` — bundle metadata.
+
+The build embeds the icon into the executable: GNU builds use `windres` from
+MinGW-w64, and MSVC builds use the Windows SDK `rc.exe`.
 
 Example:
 

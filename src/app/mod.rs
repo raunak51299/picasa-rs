@@ -441,6 +441,10 @@ impl App {
         if let Some(position) = position {
             attributes = attributes.with_position(position);
         }
+        #[cfg(windows)]
+        {
+            attributes = with_app_icon(attributes);
+        }
 
         let window = Arc::new(
             event_loop
@@ -954,6 +958,35 @@ impl App {
                 self.on_loader_event(event);
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn with_app_icon(attributes: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+    use winit::dpi::PhysicalSize;
+    use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
+
+    let small = winit::window::Icon::from_resource(1, Some(PhysicalSize::new(16, 16)))
+        .map_err(|error| log::warn!("could not load the window icon: {error}"))
+        .ok();
+    let large = winit::window::Icon::from_resource(1, Some(PhysicalSize::new(256, 256)))
+        .map_err(|error| log::warn!("could not load the taskbar icon: {error}"))
+        .ok();
+
+    attributes.with_window_icon(small).with_taskbar_icon(large)
+}
+
+/// Windows ignores a caption icon set before the title bar exists. Re-apply
+/// the small icon once the window becomes decorated so it appears in the
+/// title bar instead of leaving the slot blank.
+#[cfg(windows)]
+pub(super) fn reapply_window_icon(window: &Window) {
+    use winit::dpi::PhysicalSize;
+    use winit::platform::windows::IconExtWindows;
+
+    match winit::window::Icon::from_resource(1, Some(PhysicalSize::new(16, 16))) {
+        Ok(icon) => window.set_window_icon(Some(icon)),
+        Err(error) => log::warn!("could not reload the window icon: {error}"),
     }
 }
 
