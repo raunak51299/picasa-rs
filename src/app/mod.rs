@@ -3,11 +3,13 @@
 mod animation;
 mod cache;
 mod events;
+mod filmstrip;
 mod input;
 pub(crate) mod slideshow;
 mod ui;
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -167,6 +169,8 @@ pub struct App {
     /// True while the pointer is over a borderless-window resize edge.
     resize_hovered: bool,
     scroll_filmstrip: bool,
+    /// Expanded range of filmstrip indices whose thumbnails are wanted.
+    thumb_viewport: Option<Range<usize>>,
     photo_fade: f32,
     photo_fade_start: Instant,
     show_help_until: Instant,
@@ -369,6 +373,7 @@ impl App {
             ui_hovered: false,
             resize_hovered: false,
             scroll_filmstrip: true,
+            thumb_viewport: None,
             photo_fade: 1.0,
             photo_fade_start: now,
             show_help_until: now + HELP_DURATION,
@@ -647,6 +652,7 @@ impl App {
             .is_some_and(|folder| Some(folder) == target.parent());
 
         self.nav = nav;
+        self.reset_thumb_viewport();
         if same_folder {
             self.failed_full.clear();
             self.failed_thumb.clear();
@@ -719,6 +725,7 @@ impl App {
         match crate::viewer::navigation::Navigation::new(&path) {
             Ok(nav) => {
                 self.nav = nav;
+                self.reset_thumb_viewport();
                 self.show_toast("Folder refreshed");
             }
             Err(error) => self.show_toast(format!("Could not refresh the folder: {error:#}")),

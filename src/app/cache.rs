@@ -1,7 +1,9 @@
 //! Distance-based cache eviction.
 
+use std::ops::Range;
 use std::path::PathBuf;
 
+use super::filmstrip::range_distance;
 use super::{App, PHOTO_CACHE_BYTE_BUDGET, PHOTO_CACHE_RADIUS, THUMB_CACHE_LIMIT};
 
 impl App {
@@ -13,7 +15,7 @@ impl App {
             .map(|path| (path.clone(), self.nav.index_of(path).unwrap_or(usize::MAX)))
             .collect();
         let limit = PHOTO_CACHE_RADIUS * 2 + 1;
-        for path in eviction_targets(&entries, current, limit) {
+        for path in eviction_targets(&entries, current, None, limit) {
             self.photos.remove(&path);
         }
 
@@ -42,7 +44,12 @@ impl App {
             .keys()
             .map(|path| (path.clone(), self.nav.index_of(path).unwrap_or(usize::MAX)))
             .collect();
-        for path in eviction_targets(&entries, current, THUMB_CACHE_LIMIT) {
+        for path in eviction_targets(
+            &entries,
+            current,
+            self.thumb_viewport.as_ref(),
+            THUMB_CACHE_LIMIT,
+        ) {
             // Dropping the handle frees the egui texture.
             self.thumbs.remove(&path);
         }
@@ -81,14 +88,28 @@ fn budget_targets(entries: &[(PathBuf, usize, u64)], current: usize, budget: u64
 }
 
 /// Return the cached paths to drop so at most `limit` entries remain, furthest
-/// from `current` first. Paths that are no longer in the folder sort last.
-fn eviction_targets(entries: &[(PathBuf, usize)], current: usize, limit: usize) -> Vec<PathBuf> {
+/// from `current` and the visible viewport first. The current photo is always
+/// dropped last, even when a visible tile ties it at distance zero. Paths that
+/// are no longer in the folder sort last.
+fn eviction_targets(
+    entries: &[(PathBuf, usize)],
+    current: usize,
+    viewport: Option<&Range<usize>>,
+    limit: usize,
+) -> Vec<PathBuf> {
+    let limit = limit.max(1);
     if entries.len() <= limit {
         return Vec::new();
     }
 
     let mut ranked: Vec<&(PathBuf, usize)> = entries.iter().collect();
-    ranked.sort_by_key(|(path, index)| (std::cmp::Reverse(index.abs_diff(current)), path.clone()));
+    ranked.sort_by_key(|(path, index)| {
+        (
+            std::cmp::Reverse(range_distance(*index, current, viewport)),
+            *index == current,
+            path.clone(),
+        )
+    });
 
     ranked
         .into_iter()
@@ -128,7 +149,7 @@ mod tests {
     fn eviction_drops_the_furthest_entries_first() {
         let cached = entries(&[0, 1, 5, 9]);
         assert_eq!(
-            eviction_targets(&cached, 0, 2),
+            eviction_targets(&cached, 0, None, 2),
             [PathBuf::from("photo9.jpg"), PathBuf::from("photo5.jpg")]
         );
     }
@@ -136,7 +157,25 @@ mod tests {
     #[test]
     fn eviction_does_nothing_within_the_limit() {
         let cached = entries(&[0, 1, 2]);
-        assert!(eviction_targets(&cached, 1, 3).is_empty());
-        assert!(eviction_targets(&cached, 1, 10).is_empty());
+        assert!(eviction_targets(&cached, 1, None, 3).is_empty());
+        assert!(eviction_targets(&cached, 1, None, 10).is_empty());
+    }
+
+    #[test]
+    fn eviction_keeps_the_visible_strip_near_its_scroll_position() {
+        let cached = entries(&[0, 50, 60, 90]);
+        assert_eq!(
+            eviction_targets(&cached, 0, Some(&(55..65)), 2),
+            [PathBuf::from("photo90.jpg"), PathBuf::from("photo50.jpg")]
+        );
+    }
+
+    #[test]
+    fn eviction_never_drops_the_current_photo_even_if_the_viewport_scores_it_equally() {
+        let cached = entries(&[0, 205]);
+        assert_eq!(
+            eviction_targets(&cached, 0, Some(&(200..210)), 1),
+            [PathBuf::from("photo205.jpg")]
+        );
     }
 }

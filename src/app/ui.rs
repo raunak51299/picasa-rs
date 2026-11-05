@@ -4,7 +4,8 @@ use std::time::Instant;
 
 use crate::save::SaveMode;
 
-use super::{App, THUMB_RADIUS, UiAction, truncate};
+use super::filmstrip::{THUMB_SPACING, THUMB_STRIDE, THUMB_TILE, filmstrip_width, visible_range};
+use super::{App, UiAction, truncate};
 
 impl App {
     pub(super) fn build_ui(&mut self, ctx: &egui::Context) -> Vec<UiAction> {
@@ -272,9 +273,10 @@ impl App {
         if !self.nav.is_empty() && filmstrip_alpha > 0.01 {
             let alpha = filmstrip_alpha;
             let mut scroll_to_current = self.scroll_filmstrip;
-            let start = current_index.saturating_sub(THUMB_RADIUS);
-            let end = (current_index + THUMB_RADIUS + 1).min(self.nav.len());
+            let count = self.nav.len();
+            let content_width = filmstrip_width(count);
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            let mut visible = None;
 
             egui::Area::new(egui::Id::unique("filmstrip"))
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
@@ -290,8 +292,8 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(9, 7))
                         .show(ui, |ui| {
                             ui.set_opacity(alpha);
-                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                            egui::ScrollArea::horizontal()
+                            ui.spacing_mut().item_spacing = egui::vec2(THUMB_SPACING, 0.0);
+                            let output = egui::ScrollArea::horizontal()
                                 .id_salt("filmstrip_scroll")
                                 .scroll_bar_visibility(
                                     egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
@@ -300,100 +302,119 @@ impl App {
                                 .on_hover_cursor(egui::CursorIcon::Grab)
                                 .on_drag_cursor(egui::CursorIcon::Grabbing)
                                 .max_height(62.0)
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        for index in start..end {
-                                            let Some(path) = self.nav.path(index) else {
-                                                continue;
-                                            };
-                                            let selected = index == current_index;
-                                            let (rect, response) = ui.allocate_exact_size(
-                                                egui::vec2(52.0, 52.0),
-                                                egui::Sense::click(),
+                                .show_viewport(ui, |ui, viewport| {
+                                    ui.set_min_size(egui::vec2(content_width, THUMB_TILE));
+                                    let origin = ui.max_rect().min;
+                                    let range = visible_range(viewport, count);
+
+                                    for index in range.clone() {
+                                        let Some(path) = self.nav.path(index) else {
+                                            continue;
+                                        };
+                                        let selected = index == current_index;
+                                        let rect = egui::Rect::from_min_size(
+                                            origin + egui::vec2(index as f32 * THUMB_STRIDE, 0.0),
+                                            egui::vec2(THUMB_TILE, THUMB_TILE),
+                                        );
+                                        let response = ui.interact(
+                                            rect,
+                                            ui.make_persistent_id(("filmstrip_thumb", index)),
+                                            egui::Sense::click(),
+                                        );
+
+                                        if let Some(texture) = self.thumbs.get(path) {
+                                            let texture_size = texture.size_vec2();
+                                            let scale = (THUMB_TILE / texture_size.x.max(1.0))
+                                                .min(THUMB_TILE / texture_size.y.max(1.0))
+                                                .min(1.0);
+                                            let draw_size = texture_size * scale;
+                                            let draw_rect = egui::Rect::from_center_size(
+                                                rect.center(),
+                                                draw_size,
                                             );
-
-                                            if let Some(texture) = self.thumbs.get(path) {
-                                                let texture_size = texture.size_vec2();
-                                                let scale = (52.0 / texture_size.x.max(1.0))
-                                                    .min(52.0 / texture_size.y.max(1.0))
-                                                    .min(1.0);
-                                                let draw_size = texture_size * scale;
-                                                let draw_rect = egui::Rect::from_center_size(
-                                                    rect.center(),
-                                                    draw_size,
-                                                );
-                                                ui.painter().image(
-                                                    texture.id(),
-                                                    draw_rect,
-                                                    uv,
-                                                    egui::Color32::WHITE,
-                                                );
-                                            } else {
-                                                ui.painter().rect_filled(
-                                                    rect,
-                                                    6.0,
-                                                    egui::Color32::from_gray(28),
-                                                );
-                                                let extension = path
-                                                    .extension()
-                                                    .and_then(|extension| extension.to_str())
-                                                    .unwrap_or("?")
-                                                    .to_uppercase();
-                                                ui.painter().text(
-                                                    rect.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    extension,
-                                                    egui::FontId::proportional(9.0),
-                                                    egui::Color32::from_gray(105),
-                                                );
-                                            }
-
-                                            if selected {
-                                                ui.painter().rect_stroke(
-                                                    rect.expand(1.0),
-                                                    7.0,
-                                                    egui::Stroke::new(
-                                                        2.0,
-                                                        egui::Color32::from_rgb(118, 186, 255),
-                                                    ),
-                                                    egui::StrokeKind::Outside,
-                                                );
-                                            } else if response.hovered() {
-                                                ui.painter().rect_stroke(
-                                                    rect,
-                                                    6.0,
-                                                    egui::Stroke::new(
-                                                        1.0,
-                                                        egui::Color32::from_white_alpha(55),
-                                                    ),
-                                                    egui::StrokeKind::Inside,
-                                                );
-                                            }
-
-                                            let clicked = response.clicked();
-
-                                            if selected && scroll_to_current {
-                                                response.scroll_to_me(Some(egui::Align::Center));
-                                                scroll_to_current = false;
-                                            }
-
-                                            if clicked {
-                                                actions.push(UiAction::Navigate(index));
-                                            }
-
-                                            let name = path
-                                                .file_name()
-                                                .unwrap_or_default()
-                                                .to_string_lossy()
-                                                .to_string();
-                                            response.on_hover_text(name);
+                                            ui.painter().image(
+                                                texture.id(),
+                                                draw_rect,
+                                                uv,
+                                                egui::Color32::WHITE,
+                                            );
+                                        } else {
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                6.0,
+                                                egui::Color32::from_gray(28),
+                                            );
+                                            let extension = path
+                                                .extension()
+                                                .and_then(|extension| extension.to_str())
+                                                .unwrap_or("?")
+                                                .to_uppercase();
+                                            ui.painter().text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                extension,
+                                                egui::FontId::proportional(9.0),
+                                                egui::Color32::from_gray(105),
+                                            );
                                         }
-                                    });
+
+                                        if selected {
+                                            ui.painter().rect_stroke(
+                                                rect.expand(1.0),
+                                                7.0,
+                                                egui::Stroke::new(
+                                                    2.0,
+                                                    egui::Color32::from_rgb(118, 186, 255),
+                                                ),
+                                                egui::StrokeKind::Outside,
+                                            );
+                                        } else if response.hovered() {
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                6.0,
+                                                egui::Stroke::new(
+                                                    1.0,
+                                                    egui::Color32::from_white_alpha(55),
+                                                ),
+                                                egui::StrokeKind::Inside,
+                                            );
+                                        }
+
+                                        if response.clicked() {
+                                            actions.push(UiAction::Navigate(index));
+                                        }
+
+                                        let name = path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string();
+                                        response.on_hover_text(name);
+                                    }
+
+                                    if scroll_to_current {
+                                        let current_rect = egui::Rect::from_min_size(
+                                            origin
+                                                + egui::vec2(
+                                                    current_index as f32 * THUMB_STRIDE,
+                                                    0.0,
+                                                ),
+                                            egui::vec2(THUMB_TILE, THUMB_TILE),
+                                        );
+                                        ui.scroll_to_rect(current_rect, Some(egui::Align::Center));
+                                        scroll_to_current = false;
+                                    }
+
+                                    range
                                 });
+                            visible = Some(output.inner);
                         });
                 });
 
             self.scroll_filmstrip = scroll_to_current;
+            if let Some(range) = visible {
+                self.update_thumb_viewport(range);
+            }
         }
 
         if loading {

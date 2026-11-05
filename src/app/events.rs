@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::loader::LoaderEvent;
 use crate::loader::decoder;
 
-use super::{App, PHOTO_CACHE_RADIUS, THUMB_RADIUS, TOAST_DURATION, Toast, truncate};
+use super::{App, PHOTO_CACHE_RADIUS, TOAST_DURATION, Toast, truncate};
 
 impl App {
     pub(super) fn drain_loader_events(&mut self) {
@@ -114,7 +114,7 @@ impl App {
                     self.request_window();
                     return;
                 }
-                if !self.nav.is_near(thumb.index, THUMB_RADIUS + 8) {
+                if !self.is_thumb_relevant(thumb.index) {
                     return;
                 }
                 if self.thumbs.contains_key(&thumb.path) {
@@ -177,7 +177,9 @@ impl App {
                         }
                     }
                     crate::loader::JobKind::Thumb => {
-                        self.failed_thumb.insert(path);
+                        if self.is_thumb_relevant(index) {
+                            self.failed_thumb.insert(path);
+                        }
                     }
                     crate::loader::JobKind::Animation => {
                         let name = path
@@ -206,14 +208,16 @@ impl App {
                 }
                 let needed = match kind {
                     crate::loader::JobKind::Full => index == self.nav.current(),
-                    crate::loader::JobKind::Thumb => self.nav.is_near(index, THUMB_RADIUS),
+                    crate::loader::JobKind::Thumb => self.is_thumb_relevant(index),
                     crate::loader::JobKind::Animation => index == self.nav.current(),
                 };
                 if needed {
-                    if kind == crate::loader::JobKind::Animation {
-                        self.request_animation_for_current();
-                    } else {
-                        self.request_window();
+                    match kind {
+                        crate::loader::JobKind::Animation => self.request_animation_for_current(),
+                        crate::loader::JobKind::Thumb => {
+                            self.request_thumb_range(index..index + 1, 1);
+                        }
+                        crate::loader::JobKind::Full => self.request_window(),
                     }
                 }
             }

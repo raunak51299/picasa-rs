@@ -6,6 +6,7 @@ pub mod decoder;
 use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
+use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{
@@ -95,14 +96,27 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// A job is stale when the viewer has moved further than the kind's radius.
-fn is_stale(index: usize, current: usize, kind: JobKind) -> bool {
-    let radius = match kind {
-        JobKind::Full => STALE_FULL_RADIUS,
-        JobKind::Thumb => STALE_THUMB_RADIUS,
+/// Thumbnails inside the visible filmstrip range stay useful even when the
+/// current photo is far away.
+fn is_stale(
+    index: usize,
+    current: usize,
+    kind: JobKind,
+    thumb_viewport: Option<Range<usize>>,
+) -> bool {
+    match kind {
+        JobKind::Full => index.abs_diff(current) > STALE_FULL_RADIUS,
+        JobKind::Thumb => {
+            index.abs_diff(current) > STALE_THUMB_RADIUS
+                && !thumb_viewport.is_some_and(|range| range.contains(&index))
+        }
         // Animation is only useful for the photo currently on screen.
-        JobKind::Animation => 0,
-    };
-    index.abs_diff(current) > radius
+        JobKind::Animation => index != current,
+    }
+}
+
+fn option_viewport(start: usize, end: usize) -> Option<Range<usize>> {
+    (start < end).then_some(start..end)
 }
 
 /// Claim a job for decoding, returning false when it is already in flight.
@@ -169,10 +183,21 @@ struct Shared {
     queue: Arc<JobQueue>,
     in_flight: Mutex<HashSet<(PathBuf, JobKind)>>,
     current_index: AtomicUsize,
+    thumb_viewport_start: AtomicUsize,
+    thumb_viewport_end: AtomicUsize,
     sequence: AtomicU64,
     /// Updated once the real GPU limit is known. The loader starts before the
     /// renderer so the first decode can overlap adapter/device creation.
     max_texture_dim: AtomicU32,
+}
+
+impl Shared {
+    fn thumb_viewport(&self) -> Option<Range<usize>> {
+        option_viewport(
+            self.thumb_viewport_start.load(AtomicOrdering::Relaxed),
+            self.thumb_viewport_end.load(AtomicOrdering::Relaxed),
+        )
+    }
 }
 
 pub struct Loader {
@@ -190,6 +215,8 @@ impl Loader {
             queue: Arc::new(JobQueue::new()),
             in_flight: Mutex::new(HashSet::new()),
             current_index: AtomicUsize::new(0),
+            thumb_viewport_start: AtomicUsize::new(0),
+            thumb_viewport_end: AtomicUsize::new(0),
             sequence: AtomicU64::new(0),
             max_texture_dim: AtomicU32::new(max_texture_dim.max(1)),
         });
@@ -234,6 +261,18 @@ impl Loader {
         self.shared
             .current_index
             .store(index, AtomicOrdering::Relaxed);
+    }
+
+    /// Record the filmstrip's prefetch range so thumbnails inside it are not
+    /// discarded as stale when the current photo is elsewhere in the folder.
+    pub fn set_thumb_viewport(&self, viewport: Option<Range<usize>>) {
+        let (start, end) = viewport.map_or((0, 0), |range| (range.start, range.end));
+        self.shared
+            .thumb_viewport_start
+            .store(start, AtomicOrdering::Relaxed);
+        self.shared
+            .thumb_viewport_end
+            .store(end, AtomicOrdering::Relaxed);
     }
 
     /// Apply the renderer's real texture limit after GPU initialization.
@@ -288,7 +327,8 @@ impl Drop for Loader {
 fn worker_loop(shared: Arc<Shared>, proxy: EventLoopProxy<UserEvent>, sender: Sender<LoaderEvent>) {
     while let Some(job) = shared.queue.pop() {
         let current = shared.current_index.load(AtomicOrdering::Relaxed);
-        let event = if is_stale(job.index, current, job.kind) {
+        let thumb_viewport = shared.thumb_viewport();
+        let event = if is_stale(job.index, current, job.kind, thumb_viewport) {
             LoaderEvent::Stale {
                 path: job.path.clone(),
                 index: job.index,
@@ -410,13 +450,33 @@ mod tests {
 
     #[test]
     fn stale_radius_depends_on_job_kind() {
-        assert!(!is_stale(5, 0, JobKind::Full));
-        assert!(is_stale(6, 0, JobKind::Full));
-        assert!(!is_stale(0, 5, JobKind::Full));
-        assert!(!is_stale(48, 0, JobKind::Thumb));
-        assert!(is_stale(49, 0, JobKind::Thumb));
-        assert!(!is_stale(0, 0, JobKind::Animation));
-        assert!(is_stale(1, 0, JobKind::Animation));
+        assert!(!is_stale(5, 0, JobKind::Full, None));
+        assert!(is_stale(6, 0, JobKind::Full, None));
+        assert!(!is_stale(0, 5, JobKind::Full, None));
+        assert!(!is_stale(48, 0, JobKind::Thumb, None));
+        assert!(is_stale(49, 0, JobKind::Thumb, None));
+        assert!(!is_stale(0, 0, JobKind::Animation, None));
+        assert!(is_stale(1, 0, JobKind::Animation, None));
+    }
+
+    #[test]
+    fn thumb_staleness_accepts_a_visible_filmstrip_range() {
+        assert!(is_stale(100, 0, JobKind::Thumb, None));
+        assert!(!is_stale(100, 0, JobKind::Thumb, Some(80..120)));
+        assert!(is_stale(120, 0, JobKind::Thumb, Some(80..120)));
+        assert!(!is_stale(48, 0, JobKind::Thumb, None));
+        assert!(is_stale(49, 0, JobKind::Thumb, None));
+        assert!(!is_stale(0, 0, JobKind::Animation, None));
+        assert!(is_stale(1, 0, JobKind::Animation, None));
+        // The viewport only rescues thumbnail jobs.
+        assert!(is_stale(100, 0, JobKind::Full, Some(80..120)));
+    }
+
+    #[test]
+    fn empty_viewport_bounds_mean_no_viewport() {
+        assert_eq!(option_viewport(0, 0), None);
+        assert_eq!(option_viewport(4, 4), None);
+        assert_eq!(option_viewport(4, 9), Some(4..9));
     }
 
     #[test]
