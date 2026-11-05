@@ -2,10 +2,17 @@
 
 use std::time::Instant;
 
-use crate::save::SaveMode;
-
 use super::filmstrip::{THUMB_SPACING, THUMB_STRIDE, THUMB_TILE, filmstrip_width, visible_range};
 use super::{App, UiAction, truncate};
+
+/// Fixed widths for the control bar's dynamic readouts, so photos with
+/// different names, sizes, or angles cannot resize the bar.
+const NAME_READOUT_WIDTH: f32 = 180.0;
+const DIMENSIONS_READOUT_WIDTH: f32 = 96.0;
+const INDEX_READOUT_WIDTH: f32 = 76.0;
+const ZOOM_READOUT_WIDTH: f32 = 64.0;
+const ROTATION_READOUT_WIDTH: f32 = 40.0;
+const INTERVAL_READOUT_WIDTH: f32 = 30.0;
 
 impl App {
     pub(super) fn build_ui(&mut self, ctx: &egui::Context) -> Vec<UiAction> {
@@ -36,15 +43,6 @@ impl App {
                 .to_string_lossy()
                 .to_string()
         });
-        let saving = self.pending_save.as_ref().map(|request| {
-            request
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-        });
-
         let show_controls = self.hud_alpha > 0.01;
 
         if show_controls {
@@ -92,41 +90,44 @@ impl App {
                             ui.set_max_width((ctx.content_rect().width() - 32.0).max(200.0));
                             ui.spacing_mut().item_spacing.x = 7.0;
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(
-                                    egui::RichText::new(truncate(&file_name, 32))
-                                        .size(13.0)
-                                        .strong(),
-                                );
-                                ui.label(
-                                    egui::RichText::new(dimensions)
-                                        .size(12.0)
-                                        .color(egui::Color32::from_gray(160)),
+                                name_readout(ui, &file_name);
+                                readout(
+                                    ui,
+                                    DIMENSIONS_READOUT_WIDTH,
+                                    Some(
+                                        egui::RichText::new(dimensions)
+                                            .size(12.0)
+                                            .color(egui::Color32::from_gray(160)),
+                                    ),
                                 );
                                 ui.separator();
-                                ui.label(
-                                    egui::RichText::new(index_label)
-                                        .size(12.0)
-                                        .color(egui::Color32::from_gray(185)),
-                                );
-                                ui.label(
-                                    egui::RichText::new(zoom)
-                                        .size(12.0)
-                                        .color(egui::Color32::from_gray(185)),
-                                );
-                                if rotation != 0 {
-                                    ui.label(
-                                        egui::RichText::new(format!("{rotation}°"))
+                                readout(
+                                    ui,
+                                    INDEX_READOUT_WIDTH,
+                                    Some(
+                                        egui::RichText::new(index_label)
                                             .size(12.0)
                                             .color(egui::Color32::from_gray(185)),
-                                    );
-                                }
-                                if !self.adjustments.is_neutral() {
-                                    ui.label(
-                                        egui::RichText::new("Edited")
-                                            .size(11.0)
-                                            .color(egui::Color32::from_rgb(118, 186, 255)),
-                                    );
-                                }
+                                    ),
+                                );
+                                readout(
+                                    ui,
+                                    ZOOM_READOUT_WIDTH,
+                                    Some(
+                                        egui::RichText::new(zoom)
+                                            .size(12.0)
+                                            .color(egui::Color32::from_gray(185)),
+                                    ),
+                                );
+                                readout(
+                                    ui,
+                                    ROTATION_READOUT_WIDTH,
+                                    (rotation != 0).then(|| {
+                                        egui::RichText::new(format!("{rotation}°"))
+                                            .size(12.0)
+                                            .color(egui::Color32::from_gray(185))
+                                    }),
+                                );
                                 ui.separator();
 
                                 let playing = self.slideshow.is_some();
@@ -138,13 +139,17 @@ impl App {
                                 if small_button(ui, "−s").clicked() {
                                     actions.push(UiAction::SlideshowSlower);
                                 }
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{}s",
-                                        self.slideshow_interval.as_secs()
-                                    ))
-                                    .size(12.0)
-                                    .color(egui::Color32::from_gray(185)),
+                                readout(
+                                    ui,
+                                    INTERVAL_READOUT_WIDTH,
+                                    Some(
+                                        egui::RichText::new(format!(
+                                            "{}s",
+                                            self.slideshow_interval.as_secs()
+                                        ))
+                                        .size(12.0)
+                                        .color(egui::Color32::from_gray(185)),
+                                    ),
                                 );
                                 if small_button(ui, "+s").clicked() {
                                     actions.push(UiAction::SlideshowFaster);
@@ -198,9 +203,6 @@ impl App {
                                     .clicked()
                                 {
                                     actions.push(UiAction::RotateView(true));
-                                }
-                                if small_button(ui, "Fix").clicked() {
-                                    actions.push(UiAction::ToggleFixes);
                                 }
                                 if small_button(ui, "Share").clicked() {
                                     actions.push(UiAction::ToggleShare);
@@ -512,128 +514,6 @@ impl App {
                 });
         }
 
-        if self.show_fixes {
-            let mut adjustments = self.adjustments;
-            let mut changed = false;
-            egui::Area::new(egui::Id::unique("fix-panel"))
-                .anchor(egui::Align2::LEFT_TOP, egui::vec2(18.0, 18.0))
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha(205))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(24)))
-                        .corner_radius(egui::CornerRadius::same(16))
-                        .inner_margin(egui::Margin::same(16))
-                        .show(ui, |ui| {
-                            ui.set_max_width(320.0);
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Fixes").size(14.0).strong());
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if small_button(ui, "Close").clicked() {
-                                            actions.push(UiAction::ToggleFixes);
-                                        }
-                                    },
-                                );
-                            });
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new("One-click looks")
-                                    .size(10.0)
-                                    .color(egui::Color32::from_gray(135)),
-                            );
-                            ui.horizontal_wrapped(|ui| {
-                                for (label, preset) in [
-                                    ("Auto", crate::adjust::Adjustments::auto()),
-                                    ("Lighten", crate::adjust::Adjustments::lighten()),
-                                    ("Darken", crate::adjust::Adjustments::darken()),
-                                    ("Warm", crate::adjust::Adjustments::warm()),
-                                    ("Cool", crate::adjust::Adjustments::cool()),
-                                ] {
-                                    if small_button(ui, label).clicked() {
-                                        adjustments = preset;
-                                        changed = true;
-                                    }
-                                }
-                            });
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(4.0);
-                            ui.spacing_mut().slider_width = 190.0;
-
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(&mut adjustments.brightness, -0.3..=0.3)
-                                        .text("Brightness"),
-                                )
-                                .changed();
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(&mut adjustments.contrast, 0.25..=2.5)
-                                        .text("Contrast"),
-                                )
-                                .changed();
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(&mut adjustments.gamma, 0.2..=3.0)
-                                        .text("Gamma"),
-                                )
-                                .changed();
-                            changed |= ui
-                                .add(egui::Slider::new(&mut adjustments.red, 0.5..=1.5).text("Red"))
-                                .changed();
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(&mut adjustments.green, 0.5..=1.5)
-                                        .text("Green"),
-                                )
-                                .changed();
-                            changed |= ui
-                                .add(
-                                    egui::Slider::new(&mut adjustments.blue, 0.5..=1.5)
-                                        .text("Blue"),
-                                )
-                                .changed();
-
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.add_enabled_ui(!adjustments.is_neutral(), |ui| {
-                                    if small_button(ui, "Save").clicked() {
-                                        actions.push(UiAction::Save {
-                                            mode: SaveMode::Overwrite,
-                                            adjustments,
-                                        });
-                                    }
-                                    if small_button(ui, "Save a copy").clicked() {
-                                        actions.push(UiAction::Save {
-                                            mode: SaveMode::Copy,
-                                            adjustments,
-                                        });
-                                    }
-                                });
-                                if small_button(ui, "Revert").clicked() {
-                                    adjustments = crate::adjust::Adjustments::default();
-                                    changed = true;
-                                }
-                            });
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(if adjustments.is_neutral() {
-                                    "No adjustments"
-                                } else {
-                                    "Preview only — Save applies it to the file"
-                                })
-                                .size(10.0)
-                                .color(egui::Color32::from_gray(150)),
-                            );
-                        });
-                });
-            if changed {
-                actions.push(UiAction::SetAdjustments(adjustments));
-            }
-        }
-
         if self.show_share {
             let file_name = current_path
                 .file_name()
@@ -692,7 +572,7 @@ impl App {
                             ui.add_space(6.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "Copy image copies the current view, including fixes. \
+                                    "Copy image copies the photo with its EXIF orientation applied. \
                                      Ctrl+C / Ctrl+Shift+C / Ctrl+E / Ctrl+Enter / Ctrl+P.",
                                 )
                                 .size(10.0)
@@ -892,46 +772,6 @@ impl App {
                 });
         }
 
-        if let Some(file_name) = saving {
-            egui::Area::new(egui::Id::unique("save-confirm"))
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::NONE
-                        .fill(egui::Color32::from_black_alpha(210))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(30)))
-                        .corner_radius(egui::CornerRadius::same(16))
-                        .inner_margin(egui::Margin::same(18))
-                        .show(ui, |ui| {
-                            ui.set_max_width(440.0);
-                            ui.label(
-                                egui::RichText::new(format!("Save color fixes to {file_name}?"))
-                                    .size(14.0)
-                                    .strong(),
-                            );
-                            ui.add_space(5.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    "The adjusted pixels replace the original file. \
-                                     JPEG metadata and orientation are preserved. \
-                                     Use Save a copy to keep the original unchanged.",
-                                )
-                                .size(11.0)
-                                .color(egui::Color32::from_gray(170)),
-                            );
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                if small_button(ui, "Save").clicked() {
-                                    actions.push(UiAction::ConfirmSave);
-                                }
-                                if small_button(ui, "Cancel").clicked() {
-                                    actions.push(UiAction::CancelSave);
-                                }
-                            });
-                        });
-                });
-        }
-
         if let Some(text) = toast {
             egui::Area::new(egui::Id::unique("toast"))
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
@@ -972,7 +812,7 @@ impl App {
                             ui.set_opacity(fade);
                             ui.label(
                                 egui::RichText::new(
-                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   F: fixes   |   I: info   |   C: share   |   Del: recycle   |   Esc: close panel / stop / exit   |   Drop a file or folder to open",
+                                    "Scroll: zoom   |   Left/Right: browse   |   Space: slideshow   |   I: info   |   C: share   |   Del: recycle   |   Esc: close panel / stop / exit   |   Drop a file or folder to open",
                                 )
                                 .size(12.0)
                                 .color(egui::Color32::from_gray(215)),
@@ -1034,6 +874,34 @@ fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.end_row();
 }
 
+/// Draw the file name in a fixed-width slot. A truncated `Label` shows its full
+/// text on hover by default, which reveals the whole name.
+fn name_readout(ui: &mut egui::Ui, name: &str) {
+    let height = ui.spacing().interact_size.y;
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(NAME_READOUT_WIDTH, height), egui::Sense::hover());
+    let mut label_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    label_ui.add(egui::Label::new(egui::RichText::new(name).size(13.0).strong()).truncate());
+}
+
+/// Draw a readout in a fixed-width, right-aligned slot so changing values do
+/// not resize the control bar.
+fn readout(ui: &mut egui::Ui, width: f32, text: Option<egui::RichText>) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            if let Some(text) = text {
+                ui.label(text);
+            }
+        },
+    );
+}
+
 fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).size(12.0))
@@ -1041,4 +909,91 @@ fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
             .corner_radius(egui::CornerRadius::same(9))
             .min_size(egui::vec2(0.0, 24.0)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Row<'a> {
+        name: &'a str,
+        dimensions: &'a str,
+        index: &'a str,
+        zoom: &'a str,
+        rotation: i32,
+        seconds: u64,
+    }
+
+    /// Width of a control row built from the same fixed-width readouts as the
+    /// real bar.
+    fn row_width(row: &Row<'_>) -> f32 {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 100.0),
+            )),
+            ..Default::default()
+        };
+        let mut width = 0.0;
+        let mut output = ctx.run_ui(input, |ui| {
+            width = ui
+                .horizontal_wrapped(|ui| {
+                    name_readout(ui, row.name);
+                    readout(
+                        ui,
+                        DIMENSIONS_READOUT_WIDTH,
+                        Some(egui::RichText::new(row.dimensions).size(12.0)),
+                    );
+                    ui.separator();
+                    readout(
+                        ui,
+                        INDEX_READOUT_WIDTH,
+                        Some(egui::RichText::new(row.index).size(12.0)),
+                    );
+                    readout(
+                        ui,
+                        ZOOM_READOUT_WIDTH,
+                        Some(egui::RichText::new(row.zoom).size(12.0)),
+                    );
+                    readout(
+                        ui,
+                        ROTATION_READOUT_WIDTH,
+                        (row.rotation != 0)
+                            .then(|| egui::RichText::new(format!("{}°", row.rotation)).size(12.0)),
+                    );
+                    ui.separator();
+                    readout(
+                        ui,
+                        INTERVAL_READOUT_WIDTH,
+                        Some(egui::RichText::new(format!("{}s", row.seconds)).size(12.0)),
+                    );
+                    ui.min_rect().width()
+                })
+                .inner;
+        });
+        output.textures_delta.clear();
+        width
+    }
+
+    #[test]
+    fn readout_slots_keep_the_bar_width_static() {
+        let short = Row {
+            name: "photo-0001.jpg",
+            dimensions: "1600 × 1200",
+            index: "1 / 400",
+            zoom: "Fit 72%",
+            rotation: 0,
+            seconds: 4,
+        };
+        let long = Row {
+            name: "a-very-long-photo-name-that-must-be-truncated.jpg",
+            dimensions: "99999 × 99999",
+            index: "99999 / 99999",
+            zoom: "Fit 1600%",
+            rotation: 359,
+            seconds: 60,
+        };
+        assert_eq!(row_width(&short), row_width(&long));
+    }
 }

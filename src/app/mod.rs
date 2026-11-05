@@ -23,14 +23,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowId};
 
-use crate::adjust::Adjustments;
 use crate::animation::Playback;
 use crate::info::{self, PhotoInfo};
 use crate::loader::{Loader, LoaderEvent};
 use crate::preferences::Preferences;
 use crate::preview::PreviewWindow;
 use crate::renderer::{GpuPhoto, PhotoDraw, Renderer};
-use crate::save::SaveMode;
 use crate::viewer::camera::{Camera, Vec2};
 use crate::viewer::navigation::Navigation;
 
@@ -55,11 +53,6 @@ struct Toast {
     until: Instant,
 }
 
-struct SaveRequest {
-    path: PathBuf,
-    adjustments: Adjustments,
-}
-
 pub enum UserEvent {
     /// A loader result is waiting in the loader channel.
     LoaderReady,
@@ -67,16 +60,12 @@ pub enum UserEvent {
     Focus,
     /// Another launch asked this viewer to open a file or directory.
     OpenPath(PathBuf),
-    /// A background save or copy finished.
+    /// A background copy finished.
     JobDone,
 }
 
 /// Result of slow file work that ran on a worker thread.
 pub(crate) enum JobResult {
-    Saved {
-        name: String,
-        result: Result<crate::save::SavedFile>,
-    },
     Copied {
         path: PathBuf,
         name: String,
@@ -94,7 +83,6 @@ enum UiAction {
     ConfirmDelete,
     CancelDelete,
     ToggleInfo,
-    ToggleFixes,
     ToggleShare,
     CopyImage,
     CopyPath,
@@ -102,13 +90,6 @@ enum UiAction {
     OpenGpsMap,
     Reveal,
     Print,
-    SetAdjustments(Adjustments),
-    Save {
-        mode: SaveMode,
-        adjustments: Adjustments,
-    },
-    ConfirmSave,
-    CancelSave,
     ZoomIn,
     ZoomOut,
     SetZoom(f32),
@@ -149,9 +130,6 @@ pub struct App {
     deferred_loader_events: Vec<LoaderEvent>,
     failed_full: HashMap<PathBuf, String>,
     failed_thumb: HashSet<PathBuf>,
-    /// Files whose cached pixels must be replaced after a save.
-    reload_full: HashSet<PathBuf>,
-    reload_thumb: HashSet<PathBuf>,
     cursor: Option<PhysicalPosition<f64>>,
     dragging: bool,
     drag_last: Option<PhysicalPosition<f64>>,
@@ -178,10 +156,7 @@ pub struct App {
     pending_delete: Option<PathBuf>,
     show_info: bool,
     photo_info: Option<PhotoInfo>,
-    show_fixes: bool,
     show_share: bool,
-    adjustments: Adjustments,
-    pending_save: Option<SaveRequest>,
     slideshow: Option<Slideshow>,
     /// Remembered between slideshow runs.
     slideshow_interval: Duration,
@@ -359,8 +334,6 @@ impl App {
             deferred_loader_events: Vec::new(),
             failed_full: HashMap::new(),
             failed_thumb: HashSet::new(),
-            reload_full: HashSet::new(),
-            reload_thumb: HashSet::new(),
             cursor: None,
             dragging: false,
             drag_last: None,
@@ -381,10 +354,7 @@ impl App {
             pending_delete: None,
             show_info: false,
             photo_info: None,
-            show_fixes: false,
             show_share: false,
-            adjustments: Adjustments::default(),
-            pending_save: None,
             slideshow: None,
             slideshow_interval: preferences.slideshow_interval,
             preferences,
@@ -574,7 +544,6 @@ impl App {
         self.animation = None;
         self.scroll_filmstrip = true;
         self.last_click = None;
-        self.adjustments = Adjustments::default();
         if let Some(slideshow) = &mut self.slideshow {
             slideshow.defer(Instant::now());
         }
@@ -662,19 +631,14 @@ impl App {
             self.failed_full.clear();
             self.failed_thumb.clear();
         }
-        self.reload_full.clear();
-        self.reload_thumb.clear();
         self.failed_animation.clear();
         self.no_animation.clear();
         self.animation = None;
         self.deferred_loader_events.clear();
         self.pending_delete = None;
-        self.pending_save = None;
         self.show_info = false;
         self.photo_info = None;
-        self.show_fixes = false;
         self.show_share = false;
-        self.adjustments = Adjustments::default();
         self.slideshow = None;
         self.drag_hover = false;
 
@@ -732,7 +696,7 @@ impl App {
         }
     }
 
-    /// True (with a toast) while a background save or copy runs.
+    /// True (with a toast) while a background copy runs.
     fn jobs_busy(&mut self) -> bool {
         if self.jobs_running > 0 {
             self.show_toast("Another operation is still running");
@@ -757,7 +721,6 @@ impl App {
         while let Ok(result) = self.jobs_rx.try_recv() {
             self.jobs_running = self.jobs_running.saturating_sub(1);
             match result {
-                JobResult::Saved { name, result } => self.finish_save(name, result),
                 JobResult::Copied { path, name, result } => self.finish_copy(path, name, result),
             }
         }
@@ -903,7 +866,6 @@ impl App {
         let half_size = self.camera.image_half_size();
         let angle = self.camera.angle;
         let alpha = self.photo_fade;
-        let (adjust, gains) = self.adjustments.uniforms();
         let current_path = self.nav.current_path();
 
         let render_result = {
@@ -915,8 +877,6 @@ impl App {
                     half_size: [half_size.x, half_size.y],
                     angle,
                     alpha,
-                    adjust,
-                    gains,
                 });
 
             self.renderer
@@ -1234,7 +1194,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         if self.slideshow.as_ref().is_some_and(|show| show.is_due(now)) {
-            if self.pending_delete.is_some() || self.pending_save.is_some() {
+            if self.pending_delete.is_some() {
                 // Don't advance behind an open confirmation dialog.
                 if let Some(show) = &mut self.slideshow {
                     show.defer(now);

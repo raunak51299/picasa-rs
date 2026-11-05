@@ -9,15 +9,11 @@ use winit::keyboard::KeyCode;
 use winit::window::{CursorIcon, Fullscreen, ResizeDirection};
 
 use crate::delete;
-use crate::loader::JobKind;
-use crate::save::{self, SaveMode};
 use crate::share;
 use crate::viewer::camera::Vec2;
 
 use super::slideshow::{Slideshow, stepped_interval};
-use super::{
-    App, HELP_DURATION, JobResult, SaveRequest, TOAST_DURATION, Toast, UiAction, truncate,
-};
+use super::{App, HELP_DURATION, JobResult, TOAST_DURATION, Toast, UiAction, truncate};
 
 impl App {
     pub(super) fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, repeat: bool) {
@@ -36,28 +32,11 @@ impl App {
             return;
         }
 
-        if self.pending_save.is_some() {
-            if !repeat {
-                match code {
-                    KeyCode::Enter | KeyCode::KeyY => self.confirm_save(),
-                    KeyCode::Escape | KeyCode::KeyN => self.pending_save = None,
-                    _ => {}
-                }
-            }
-            self.record_activity();
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-            return;
-        }
-
         match code {
             KeyCode::Escape => {
                 if !repeat {
                     if self.show_info {
                         self.show_info = false;
-                    } else if self.show_fixes {
-                        self.show_fixes = false;
                     } else if self.show_share {
                         self.show_share = false;
                     } else if self.slideshow.take().is_some() {
@@ -138,11 +117,6 @@ impl App {
                     if self.show_info {
                         self.photo_info = self.nav.current_path().map(crate::info::read);
                     }
-                }
-            }
-            KeyCode::KeyF => {
-                if !repeat {
-                    self.show_fixes = !self.show_fixes;
                 }
             }
             KeyCode::KeyC => {
@@ -291,8 +265,6 @@ impl App {
                 self.thumbs.remove(&path);
                 self.failed_full.remove(&path);
                 self.failed_thumb.remove(&path);
-                self.reload_full.remove(&path);
-                self.reload_thumb.remove(&path);
                 self.failed_animation.remove(&path);
                 self.no_animation.remove(&path);
                 self.session_rotation.remove(&path);
@@ -330,120 +302,6 @@ impl App {
         }
     }
 
-    fn invalidate_path(&mut self, path: &Path) {
-        self.photos.remove(path);
-        self.thumbs.remove(path);
-        self.failed_full.remove(path);
-        self.failed_thumb.remove(path);
-        self.failed_animation.remove(path);
-        self.no_animation.remove(path);
-        if self
-            .animation
-            .as_ref()
-            .is_some_and(|show| show.path() == path)
-        {
-            self.animation = None;
-        }
-        self.reload_full.insert(path.to_path_buf());
-        self.reload_thumb.insert(path.to_path_buf());
-
-        if let Some(loader) = &self.loader {
-            if !loader.has_in_flight(path, JobKind::Full) {
-                self.reload_full.remove(path);
-            }
-            if !loader.has_in_flight(path, JobKind::Thumb) {
-                self.reload_thumb.remove(path);
-            }
-        }
-    }
-
-    fn request_save(&mut self, mode: SaveMode, mut adjustments: crate::adjust::Adjustments) {
-        adjustments.clamp();
-        self.adjustments = adjustments;
-        if adjustments.is_neutral() {
-            self.toast = Some(Toast {
-                text: "Adjust the photo before saving".to_string(),
-                until: Instant::now() + TOAST_DURATION,
-            });
-            return;
-        }
-        let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
-            return;
-        };
-        let request = SaveRequest { path, adjustments };
-        if mode == SaveMode::Overwrite {
-            self.pending_save = Some(request);
-        } else {
-            self.save_now(request, mode);
-        }
-    }
-
-    fn confirm_save(&mut self) {
-        let Some(request) = self.pending_save.take() else {
-            return;
-        };
-        self.save_now(request, SaveMode::Overwrite);
-    }
-
-    fn save_now(&mut self, request: SaveRequest, mode: SaveMode) {
-        if self.jobs_busy() {
-            return;
-        }
-        let name = request
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        self.show_toast(format!("Saving {name}â€¦"));
-        self.spawn_job(move || JobResult::Saved {
-            name,
-            result: save::save_adjusted(&request.path, request.adjustments, mode),
-        });
-    }
-
-    pub(super) fn finish_save(&mut self, name: String, result: anyhow::Result<save::SavedFile>) {
-        match result {
-            Ok(saved) => {
-                let saved_name = saved
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if saved.is_copy {
-                    self.nav.insert_sorted(saved.path.clone());
-                    self.toast = Some(Toast {
-                        text: format!("Saved copy as {saved_name}"),
-                        until: Instant::now() + TOAST_DURATION,
-                    });
-                    log::info!("saved adjusted copy {}", saved.path.display());
-                    self.request_window();
-                } else {
-                    let is_current = self.nav.current_path() == Some(saved.path.as_path());
-                    self.invalidate_path(&saved.path);
-                    self.toast = Some(Toast {
-                        text: format!("Saved fixes to {name}"),
-                        until: Instant::now() + TOAST_DURATION,
-                    });
-                    log::info!("saved color fixes to {}", saved.path.display());
-                    if is_current {
-                        self.camera.clear_image();
-                        self.on_current_changed();
-                    } else {
-                        self.request_window();
-                    }
-                }
-            }
-            Err(error) => {
-                self.toast = Some(Toast {
-                    text: truncate(&format!("Could not save {name}: {error:#}"), 150),
-                    until: Instant::now() + TOAST_DURATION,
-                });
-            }
-        }
-    }
-
     fn copy_current_image(&mut self) {
         let Some(path) = self.nav.current_path().map(Path::to_path_buf) else {
             return;
@@ -456,9 +314,8 @@ impl App {
         if self.jobs_busy() {
             return;
         }
-        let adjustments = self.adjustments;
         self.spawn_job(move || JobResult::Copied {
-            result: share::copy_image(&path, adjustments),
+            result: share::copy_image(&path),
             path,
             name,
         });
@@ -647,7 +504,6 @@ impl App {
                     self.photo_info = self.nav.current_path().map(crate::info::read);
                 }
             }
-            UiAction::ToggleFixes => self.show_fixes = !self.show_fixes,
             UiAction::ToggleShare => self.show_share = !self.show_share,
             UiAction::CopyImage => self.copy_current_image(),
             UiAction::CopyPath => self.copy_current_path(),
@@ -655,13 +511,6 @@ impl App {
             UiAction::OpenGpsMap => self.open_gps_map(),
             UiAction::Reveal => self.reveal_current(),
             UiAction::Print => self.print_current(),
-            UiAction::SetAdjustments(mut adjustments) => {
-                adjustments.clamp();
-                self.adjustments = adjustments;
-            }
-            UiAction::Save { mode, adjustments } => self.request_save(mode, adjustments),
-            UiAction::ConfirmSave => self.confirm_save(),
-            UiAction::CancelSave => self.pending_save = None,
             UiAction::ZoomIn => self.zoom_in(),
             UiAction::ZoomOut => self.zoom_out(),
             UiAction::SetZoom(scale) => self

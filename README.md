@@ -56,13 +56,8 @@ Built with Rust, [`winit`](https://crates.io/crates/winit),
   fall back to their first frame.
 - **Share actions** — `C` opens a share panel with Copy image, Copy path, Open,
   Show in folder, and Print. Copy image captures the photo with its EXIF
-  orientation and color fixes applied, so it can be pasted into chat or an
-  editor. Print hands the file to the shell `print` handler.
-- **GPU color fixes** — `F` opens non-destructive brightness, contrast, gamma,
-  and per-channel controls plus Auto, Lighten, Darken, Warm, and Cool presets.
-  The shader applies them live without touching the file; Revert clears them.
-  Save rewrites the file, Save a copy writes a sibling `(fixed)` file, and
-  adjustments reset when you move to another photo.
+  orientation applied, so it can be pasted into chat or an editor. Print hands
+  the file to the shell `print` handler.
 - **Large images** — mipmaps are generated on the GPU, so multi-megapixel photos
   downscale cleanly and quickly.
 - **Session rotation** — `R`/`L`, `Ctrl+Left`/`Right`, or the HUD arrows rotate
@@ -134,9 +129,8 @@ $env:RUST_LOG = "info"
 | `Space` / `S` | Start / pause the slideshow |
 | `[` / `]` | Shorten / lengthen the slideshow interval |
 | `I` | Show / hide the metadata panel |
-| `F` | Show / hide the color-fix panel |
 | `C` | Show / hide the share panel |
-| `Ctrl+C` | Copy the current view (including fixes) to the clipboard |
+| `Ctrl+C` | Copy the current view (with EXIF orientation) to the clipboard |
 | `Ctrl+Shift+C` | Copy the file path |
 | `Ctrl+E` | Show the file in Explorer |
 | `Ctrl+Enter` | Open the file in its default application |
@@ -152,17 +146,6 @@ $env:RUST_LOG = "info"
 | Top-right `×` (fullscreen) | Close |
 | Native title-bar buttons (windowed) | Minimize or close |
 | Native maximize button (windowed) | Return to fullscreen |
-
-### Saving color fixes
-
-The fix panel previews adjustments on the GPU. **Save** asks for confirmation
-and replaces the original file; **Save a copy** writes
-`<name> (fixed).<ext>` (then `(fixed 2)`, and so on) and leaves the original
-untouched. JPEGs are re-encoded at quality 92 and keep their original EXIF APP1
-segment byte for byte, including the orientation tag. Other formats are
-re-encoded by the `image` crate with the orientation baked into the pixels,
-because their metadata is dropped. Saving color fixes for GIF files is not
-supported yet.
 
 ## Preferences
 
@@ -322,13 +305,11 @@ src/
     input.rs              keyboard, mouse, and HUD action handling
     slideshow.rs          timed slideshow state
     ui.rs                 HUD, filmstrip, help, and panels
-  adjust.rs               color-fix presets and pixel math
   animation.rs            animated photo playback timing
   delete.rs               Recycle Bin shell call
   info.rs                 EXIF metadata reading and formatting
   preview.rs              native layered startup preview (Windows)
-  rotate.rs               JPEG EXIF/ICC metadata helpers
-  save.rs                 adjusted-image saving and JPEG EXIF preservation
+  rotate.rs               JPEG EXIF orientation helper
   share.rs                clipboard, Explorer, open, and print actions
   loader/
     mod.rs                priority worker queue, prefetch, shutdown

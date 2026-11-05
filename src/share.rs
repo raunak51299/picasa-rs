@@ -7,26 +7,22 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use image::RgbaImage;
 
-use crate::adjust::{Adjustments, apply_to_rgba};
 use crate::loader::decoder;
 use crate::rotate;
 
-/// Decode the photo as it appears on screen: EXIF orientation applied and color
-/// fixes baked in.
-pub fn display_rgba(path: &Path, adjustments: Adjustments) -> Result<RgbaImage> {
+/// Decode the photo as it appears on screen: EXIF orientation applied.
+pub fn display_rgba(path: &Path) -> Result<RgbaImage> {
     let data = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
     let decoded = image::load_from_memory(&data)
         .with_context(|| format!("could not decode {}", path.display()))?
         .to_rgba8();
     let orientation = rotate::read_orientation(&data).unwrap_or(1) as u8;
-    let mut rgba = decoder::orient_rgba(&decoded, orientation);
-    apply_to_rgba(rgba.as_mut(), adjustments);
-    Ok(rgba)
+    Ok(decoder::orient_rgba(&decoded, orientation))
 }
 
 /// Put the current view of the photo on the Windows clipboard.
-pub fn copy_image(path: &Path, adjustments: Adjustments) -> Result<()> {
-    let rgba = display_rgba(path, adjustments)?;
+pub fn copy_image(path: &Path) -> Result<()> {
+    let rgba = display_rgba(path)?;
     let mut clipboard =
         arboard::Clipboard::new().context("could not open the Windows clipboard")?;
     clipboard
@@ -148,22 +144,6 @@ mod tests {
     }
 
     #[test]
-    fn display_pixels_apply_adjustments() {
-        let directory = temp_dir("adjust");
-        let path = directory.join("gray.png");
-        RgbaImage::from_pixel(2, 2, Rgba([64, 64, 64, 255]))
-            .save(&path)
-            .unwrap();
-
-        let plain = display_rgba(&path, Adjustments::default()).unwrap();
-        let light = display_rgba(&path, Adjustments::lighten()).unwrap();
-        assert!(light.get_pixel(0, 0)[0] > plain.get_pixel(0, 0)[0]);
-        assert_eq!(light.get_pixel(0, 0)[3], 255);
-
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn display_pixels_apply_exif_orientation() {
         let directory = temp_dir("orientation");
         let path = directory.join("sideways.jpg");
@@ -175,7 +155,7 @@ mod tests {
         let jpeg = rotate::rewrite_jpeg_orientation(&cursor.into_inner(), 6).unwrap();
         fs::write(&path, jpeg).unwrap();
 
-        let display = display_rgba(&path, Adjustments::default()).unwrap();
+        let display = display_rgba(&path).unwrap();
         assert_eq!(display.dimensions(), (3, 2));
 
         fs::remove_dir_all(directory).unwrap();

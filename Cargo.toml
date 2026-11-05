@@ -16,7 +16,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 kamadak-exif = "0.6"
 log = "0.4"
 pollster = "1"
-rayon = "1"
 wgpu = "30"
 winit = "0.30"
 

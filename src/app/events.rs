@@ -50,11 +50,6 @@ impl App {
                 let index = full.index;
                 let path = full.path.clone();
 
-                if self.reload_full.remove(&path) {
-                    self.request_window();
-                    return;
-                }
-
                 if self.photos.contains_key(&path) {
                     return;
                 }
@@ -110,10 +105,6 @@ impl App {
                 self.request_window();
             }
             LoaderEvent::Thumb(thumb) => {
-                if self.reload_thumb.remove(&thumb.path) {
-                    self.request_window();
-                    return;
-                }
                 if !self.is_thumb_relevant(thumb.index) {
                     return;
                 }
@@ -150,14 +141,6 @@ impl App {
                 kind,
                 message,
             } => {
-                if kind == crate::loader::JobKind::Full && self.reload_full.remove(&path) {
-                    self.request_window();
-                    return;
-                }
-                if kind == crate::loader::JobKind::Thumb && self.reload_thumb.remove(&path) {
-                    self.request_window();
-                    return;
-                }
                 match kind {
                     crate::loader::JobKind::Full => {
                         let name = path
@@ -198,14 +181,6 @@ impl App {
             }
             LoaderEvent::Stale { path, index, kind } => {
                 log::trace!("skipped stale job for {}", path.display());
-                if kind == crate::loader::JobKind::Full && self.reload_full.remove(&path) {
-                    self.request_window();
-                    return;
-                }
-                if kind == crate::loader::JobKind::Thumb && self.reload_thumb.remove(&path) {
-                    self.request_window();
-                    return;
-                }
                 let needed = match kind {
                     crate::loader::JobKind::Full => index == self.nav.current(),
                     crate::loader::JobKind::Thumb => self.is_thumb_relevant(index),

@@ -1,11 +1,13 @@
-//! JPEG EXIF and ICC metadata helpers.
+//! JPEG EXIF metadata helpers.
 //!
 //! Rotation is a session-only view transform; this module only reads
-//! orientation tags and copies EXIF/ICC segments when saving.
+//! orientation tags.
 
 use std::io::Cursor;
 
-use anyhow::{Context, Result, bail};
+#[cfg(test)]
+use anyhow::bail;
+use anyhow::{Context, Result};
 #[cfg(test)]
 use exif::experimental::Writer;
 #[cfg(test)]
@@ -76,43 +78,6 @@ pub fn rewrite_jpeg_orientation(data: &[u8], orientation: u16) -> Result<Vec<u8>
     }
 
     insert_exif_segment(data, &app1)
-}
-
-/// Return the raw EXIF APP1 payload (starting with `Exif\0\0`) from a JPEG.
-/// Copying the segment byte for byte keeps maker notes and other fields that
-/// this crate does not understand.
-pub fn exif_app1(data: &[u8]) -> Option<Vec<u8>> {
-    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
-        return None;
-    }
-
-    let mut index = 2;
-    while index + 1 < data.len() {
-        if data[index] != 0xFF {
-            return None;
-        }
-        let marker = data[index + 1];
-        if marker == 0xDA {
-            return None;
-        }
-        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
-            index += 2;
-            continue;
-        }
-        if index + 3 >= data.len() {
-            return None;
-        }
-        let length = u16::from_be_bytes([data[index + 2], data[index + 3]]) as usize;
-        if length < 2 || index + 2 + length > data.len() {
-            return None;
-        }
-        let segment = &data[index..index + 2 + length];
-        if marker == 0xE1 && segment.len() >= 10 && &segment[4..10] == b"Exif\0\0" {
-            return Some(segment[4..].to_vec());
-        }
-        index += 2 + length;
-    }
-    None
 }
 
 /// Byte range of the TIFF structure inside the first EXIF APP1 segment.
@@ -208,52 +173,6 @@ fn patch_orientation_in_place(data: &mut [u8], orientation: u16) -> bool {
     false
 }
 
-/// Raw ICC profile APP2 segments (marker and length included) from a JPEG.
-pub fn icc_segments(data: &[u8]) -> Vec<Vec<u8>> {
-    let mut segments = Vec::new();
-    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
-        return segments;
-    }
-    let mut index = 2;
-    while index + 3 < data.len() {
-        if data[index] != 0xFF {
-            break;
-        }
-        let marker = data[index + 1];
-        if marker == 0xDA {
-            break;
-        }
-        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
-            index += 2;
-            continue;
-        }
-        let length = u16::from_be_bytes([data[index + 2], data[index + 3]]) as usize;
-        if length < 2 || index + 2 + length > data.len() {
-            break;
-        }
-        let segment = &data[index..index + 2 + length];
-        if marker == 0xE2 && segment.len() >= 16 && &segment[4..16] == b"ICC_PROFILE\0" {
-            segments.push(segment.to_vec());
-        }
-        index += 2 + length;
-    }
-    segments
-}
-
-/// Insert whole marker segments directly after the SOI marker.
-pub fn insert_segments_after_soi(data: &[u8], segments: &[Vec<u8>]) -> Result<Vec<u8>> {
-    if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
-        bail!("not a JPEG file");
-    }
-    let mut output = Vec::with_capacity(data.len() + segments.iter().map(Vec::len).sum::<usize>());
-    output.extend_from_slice(&data[..2]);
-    for segment in segments {
-        output.extend_from_slice(segment);
-    }
-    output.extend_from_slice(&data[2..]);
-    Ok(output)
-}
-
 #[cfg(test)]
 fn read_fields(data: &[u8]) -> Result<Vec<Field>> {
     let reader = Reader::new();
@@ -265,6 +184,7 @@ fn read_fields(data: &[u8]) -> Result<Vec<Field>> {
 
 /// Insert `app1` as the only EXIF APP1 segment of a JPEG, replacing any
 /// existing EXIF payload and preserving every other segment.
+#[cfg(test)]
 pub fn insert_exif_segment(data: &[u8], app1: &[u8]) -> Result<Vec<u8>> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         bail!("not a JPEG file");
@@ -394,18 +314,5 @@ mod tests {
         jpeg[12] = 0;
         jpeg[13] = 0;
         assert!(rewrite_jpeg_orientation(&jpeg, 6).is_err());
-    }
-
-    #[test]
-    fn raw_exif_segment_can_be_copied_between_jpegs() {
-        let app1 = make_exif_app1(1, "copy me");
-        let original = jpeg_with_exif(&app1);
-        let extracted = exif_app1(&original).unwrap();
-        assert_eq!(extracted, app1);
-
-        let mut encoded = vec![0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x00, 0xFF, 0xD9];
-        encoded = insert_exif_segment(&encoded, &extracted).unwrap();
-        assert_eq!(read_orientation(&encoded).unwrap(), 1);
-        assert!(encoded.ends_with(&[0x00, 0xFF, 0xD9]));
     }
 }

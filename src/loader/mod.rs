@@ -294,11 +294,6 @@ impl Loader {
         self.request(path, index, JobKind::Animation, priority);
     }
 
-    /// Whether a decode for this file and kind is already queued or running.
-    pub fn has_in_flight(&self, path: &Path, kind: JobKind) -> bool {
-        lock(&self.shared.in_flight).contains(&(path.to_path_buf(), kind))
-    }
-
     fn request(&self, path: &Path, index: usize, kind: JobKind, priority: u8) {
         if !claim_job(&self.shared.in_flight, path, kind) {
             return;

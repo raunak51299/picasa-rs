@@ -45,10 +45,6 @@ pub struct PhotoDraw<'a> {
     pub half_size: [f32; 2],
     pub angle: f32,
     pub alpha: f32,
-    /// `[brightness, contrast, gamma, unused]` in linear light.
-    pub adjust: [f32; 4],
-    /// Per-channel gains.
-    pub gains: [f32; 4],
 }
 
 pub struct Renderer {
@@ -486,8 +482,6 @@ impl Renderer {
                 uv_row0: draw.photo.uv_row0,
                 uv_row1: draw.photo.uv_row1,
                 uv_offset: draw.photo.uv_offset,
-                adjust: draw.adjust,
-                gains: draw.gains,
             };
             self.quad.write_photo(&self.queue, &uniforms);
 

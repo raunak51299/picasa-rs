@@ -5,7 +5,6 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod adjust;
 mod animation;
 mod app;
 mod delete;
@@ -15,7 +14,6 @@ mod preferences;
 mod preview;
 mod renderer;
 mod rotate;
-mod save;
 mod share;
 #[cfg(windows)]
 mod single_instance;
@@ -190,7 +188,6 @@ CONTROLS:
     [ / ]               shorten / lengthen slideshow interval
     Delete              move the current photo to the Recycle Bin
     I                   show or hide photo metadata
-    F                   show or hide color fixes
     C                   show or hide share actions
     Ctrl + C            copy the current view to the clipboard
     Ctrl + Shift + C    copy the file path
