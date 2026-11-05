@@ -64,14 +64,13 @@ fn compile_msvc(root: &Path, out: &Path, rc: &Path) {
 }
 
 fn find_rc() -> Option<PathBuf> {
-    if let Ok(output) = Command::new("where").arg("rc.exe").output() {
-        if output.status.success() {
-            if let Some(line) = String::from_utf8_lossy(&output.stdout).lines().next() {
-                let path = PathBuf::from(line.trim());
-                if path.is_file() {
-                    return Some(path);
-                }
-            }
+    if let Ok(output) = Command::new("where").arg("rc.exe").output()
+        && output.status.success()
+        && let Some(line) = String::from_utf8_lossy(&output.stdout).lines().next()
+    {
+        let path = PathBuf::from(line.trim());
+        if path.is_file() {
+            return Some(path);
         }
     }
 
